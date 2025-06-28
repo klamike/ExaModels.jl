@@ -36,6 +36,8 @@ struct WrapperNLPModel{
     counters::NLPModels.Counters
 end
 
+WrapperNLPModel(m::ExaModel{T,VT,E,O,C}) where {T,VT,E,O,C} = WrapperNLPModel(VT, m)
+
 """
     WrapperNLPModel(m)
 

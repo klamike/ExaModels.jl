@@ -3,6 +3,7 @@ module ExaModelsKernelAbstractions
 import ExaModels: ExaModels, NLPModels
 import KernelAbstractions: KernelAbstractions, @kernel, @index, @Const, synchronize, CPU
 
+ExaModels.default_float_type(::CPU) = Float64
 ExaModels.convert_array(v, backend::CPU) = v
 
 function getitr(gen::UnitRange{Int64})
@@ -155,7 +156,8 @@ end
 
 
 function _grad_structure!(backend, objs, gsparsity)
-    ExaModels.sgradient!(backend, gsparsity, objs, nothing, NaN)
+    TNaN = convert(ExaModels.default_float_type(backend), NaN)
+    ExaModels.sgradient!(backend, gsparsity, objs, nothing, TNaN)
     _grad_structure!(backend, objs.inner, gsparsity)
     synchronize(backend)
 end
@@ -172,7 +174,8 @@ function ExaModels.jac_structure!(
     return rows, cols
 end
 function _jac_structure!(backend, cons, rows, cols)
-    ExaModels.sjacobian!(backend, rows, cols, cons, nothing, NaN)
+    TNaN = convert(ExaModels.default_float_type(backend), NaN)
+    ExaModels.sjacobian!(backend, rows, cols, cons, nothing, TNaN)
     _jac_structure!(backend, cons.inner, rows, cols)
     synchronize(backend)
 end
@@ -192,13 +195,15 @@ function ExaModels.hess_structure!(
 end
 
 function _obj_hess_structure!(backend, objs, rows, cols)
-    ExaModels.shessian!(backend, rows, cols, objs, nothing, NaN, NaN)
+    TNaN = convert(ExaModels.default_float_type(backend), NaN)
+    ExaModels.shessian!(backend, rows, cols, objs, nothing, TNaN, TNaN)
     _obj_hess_structure!(backend, objs.inner, rows, cols)
     synchronize(backend)
 end
 function _obj_hess_structure!(backend, objs::ExaModels.ObjectiveNull, rows, cols) end
 function _con_hess_structure!(backend, cons, rows, cols)
-    ExaModels.shessian!(backend, rows, cols, cons, nothing, NaN, NaN)
+    TNaN = convert(ExaModels.default_float_type(backend), NaN)
+    ExaModels.shessian!(backend, rows, cols, cons, nothing, TNaN, TNaN)
     _con_hess_structure!(backend, cons.inner, rows, cols)
     synchronize(backend)
 end

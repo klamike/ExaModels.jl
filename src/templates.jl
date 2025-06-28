@@ -4,6 +4,8 @@ convert_array(v, ::Nothing) = v
 # template to avoid oneAPI sum issue
 sum(a) = Base.sum(a)
 
+default_float_type(::Nothing) = Float64
+
 # to avoid type privacy
 sort!(array; kwargs...) = Base.sort!(array; kwargs...)
 
