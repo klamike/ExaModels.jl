@@ -20,9 +20,7 @@ accelerators**. Implementation of GPU kernels is accomplished using
 the portable programming paradigm offered by
 [KernelAbstractions.jl](https://github.com/JuliaGPU/KernelAbstractions.jl).
 With ExaModels.jl, you can run your code on various devices, including
-multi-threaded CPUs, NVIDIA GPUs, AMD GPUs, and Intel GPUs. Note that
-Apple's Metal is currently not supported due to its lack of support
-for double-precision arithmetic.
+multi-threaded CPUs, NVIDIA GPUs, AMD GPUs, Intel GPUs, and Apple Metal GPUs.
 
 
 ## Highlight

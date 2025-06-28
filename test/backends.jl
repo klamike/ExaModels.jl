@@ -23,3 +23,11 @@ if haskey(ENV, "EXAMODELS_TEST_ONEAPI")
 else
     @info "excluding oneAPI"
 end
+
+if haskey(ENV, "EXAMODELS_TEST_METAL")
+    using Metal
+    push!(BACKENDS, MetalBackend())
+    @info "including Metal"
+else
+    @info "excluding Metal"
+end
