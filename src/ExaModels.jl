@@ -24,6 +24,7 @@ import NLPModels:
     jprod_nln!
 import SolverCore
 import Printf
+import StaticArrays
 
 include("templates.jl")
 include("graph.jl")

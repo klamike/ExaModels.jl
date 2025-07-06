@@ -951,5 +951,9 @@ function multipliers(result::SolverCore.AbstractExecutionStats, y::Constraint)
 end
 
 
-_adapt_gen(gen) = Base.Generator(gen.f, collect(gen.iter))
-_adapt_gen(gen::Base.Generator{P}) where {P<:Union{AbstractArray,AbstractRange}} = gen
+_adapt_gen(gen) = begin
+    new_iter = collect(gen.iter)
+    static_new_iter = StaticArrays.SArray{Tuple{size(new_iter)...}}(new_iter)
+    Base.Generator(gen.f, static_new_iter)
+end
+# _adapt_gen(gen::Base.Generator{P}) where {P<:Union{AbstractArray,AbstractRange}} = gen
