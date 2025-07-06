@@ -153,6 +153,7 @@ Base.@kwdef mutable struct ExaCore{T,VT<:AbstractVector{T},B}
     lcon::VT = similar(x0)
     ucon::VT = similar(x0)
     minimize::Bool = true
+    static_iter::Bool = false
 end
 
 # Deprecated as of v0.7
@@ -485,7 +486,7 @@ Objective
 ```
 """
 function objective(c::C, gen) where {C<:ExaCore}
-    gen = _adapt_gen(gen)
+    gen = _adapt_gen(gen, c.static_iter)
     f = SIMDFunction(gen, c.nobj, c.nnzg, c.nnzh)
     pars = gen.iter
 
@@ -547,7 +548,7 @@ function constraint(
     ucon = zero(T),
 ) where {T,C<:ExaCore{T}}
 
-    gen = _adapt_gen(gen)
+    gen = _adapt_gen(gen, c.static_iter)
     f = SIMDFunction(gen, c.ncon, c.nnzj, c.nnzh)
     pars = gen.iter
 
@@ -637,7 +638,7 @@ Constraint Augmentation
 """
 function constraint!(c::C, c1, gen::Base.Generator) where {C<:ExaCore}
 
-    gen = _adapt_gen(gen)
+    gen = _adapt_gen(gen, c.static_iter)
     f = SIMDFunction(gen, offset0(c1, 0), c.nnzj, c.nnzh)
     pars = gen.iter
 
@@ -951,9 +952,16 @@ function multipliers(result::SolverCore.AbstractExecutionStats, y::Constraint)
 end
 
 
-_adapt_gen(gen) = begin
-    new_iter = collect(gen.iter)
-    static_new_iter = StaticArrays.SArray{Tuple{size(new_iter)...}}(new_iter)
-    Base.Generator(gen.f, static_new_iter)
+_adapt_gen(gen, static_iter) = begin
+    Base.Generator(
+        gen.f,
+        if static_iter
+            collected = collect(gen.iter)
+            StaticArrays.SArray{Tuple{size(collected)...}}(collected)
+        elseif gen isa Base.Generator{P} where {P<:Union{AbstractArray,AbstractRange}}
+            gen.iter
+        else
+            collect(gen.iter)
+        end
+    )
 end
-# _adapt_gen(gen::Base.Generator{P}) where {P<:Union{AbstractArray,AbstractRange}} = gen
