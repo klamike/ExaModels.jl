@@ -162,6 +162,6 @@ function sjacobianp!(y1, y2, f, x, θ, adj)
 end
 
 function sjacobianp!(y1, y2, f, p, x, θ, comp, o0, po1, adj)
-    graph = f(p, x, AdjointNodeParameterSource(θ))
+    graph = f(p, x, AdjointParameterSource(θ))
     jrpass(graph, comp, o0, y1, y2, po1, 0, adj)
 end

@@ -220,7 +220,7 @@ struct AdjointNodeSource{VT}
     inner::VT
 end
 
-struct AdjointNodeParameterSource{VT}
+struct AdjointParameterSource{VT}
     inner::VT
 end
 
@@ -234,9 +234,9 @@ end
 @inline Base.getindex(x::I, i) where {I<:AdjointNodeSource} =
     @inbounds AdjointNodeVar(i, x.inner[i])
 
-@inline Base.getindex(x::I, i) where {I<:AdjointNodeParameterSource{Nothing}} =
+@inline Base.getindex(x::I, i) where {I<:AdjointParameterSource{Nothing}} =
     AdjointParameterNode(i, NaN)
-@inline Base.getindex(x::I, i) where {I<:AdjointNodeParameterSource} =
+@inline Base.getindex(x::I, i) where {I<:AdjointParameterSource} =
     @inbounds AdjointParameterNode(i, x.inner[i])
 
 """

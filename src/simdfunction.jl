@@ -89,7 +89,7 @@ function _simdfunction(f, o0, o1, o2, po1, mo2)
     o2step = length(a2)
     c2 = Compressor(Tuple(findfirst(isequal(i), a2) for i in y2))
 
-    pd = f(Identity(), nothing, AdjointNodeParameterSource(nothing))
+    pd = f(Identity(), nothing, AdjointParameterSource(nothing))
     py1 = []
     ExaModels.grpass(pd, nothing, py1, nothing, 0, NaN)
 
