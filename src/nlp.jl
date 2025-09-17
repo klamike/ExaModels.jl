@@ -822,6 +822,34 @@ function _jtprod_nln!(cons, x, θ, v, Jtv)
     sjacobian!(nothing, (Jtv, v), cons, x, θ, one(eltype(Jtv)))
 end
 
+function jpprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Jpv::AbstractVector)
+    fill!(Jpv, zero(eltype(Jpv)))
+    _jpprod!(m.cons, x, m.θ, v, Jpv)
+    return Jpv
+end
+
+_jpprod!(cons::ConstraintNull, x, θ, v, Jpv) = nothing
+function _jpprod!(cons, x, θ, v, Jpv)
+    _jpprod!(cons.inner, x, θ, v, Jpv)
+    if cons.f.po1step > 0
+        sjacobianp!((Jpv, v), nothing, cons, x, θ, one(eltype(Jpv)))
+    end
+end
+
+function jptprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Jptv::AbstractVector)
+    fill!(Jptv, zero(eltype(Jptv)))
+    _jptprod!(m.cons, x, m.θ, v, Jptv)
+    return Jptv
+end
+
+_jptprod!(cons::ConstraintNull, x, θ, v, Jptv) = nothing
+function _jptprod!(cons, x, θ, v, Jptv)
+    _jptprod!(cons.inner, x, θ, v, Jptv)
+    if cons.f.po1step > 0
+        sjacobianp!((Jptv, v), nothing, cons, x, θ, one(eltype(Jptv)))
+    end
+end
+
 function hess_coord!(
     m::ExaModel,
     x::AbstractVector,
@@ -930,6 +958,31 @@ _con_hprod!(cons::ConstraintNull, x, θ, y, v, Hv, obj_weight) = nothing
 function _con_hprod!(cons, x, θ, y, v, Hv, obj_weight)
     _con_hprod!(cons.inner, x, θ, y, v, Hv, obj_weight)
     shessian!((Hv, v), nothing, cons, x, θ, y, zero(eltype(Hv)))
+end
+
+function mhtprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x)))
+    fill!(Hmtv, zero(eltype(Hmtv)))
+    _obj_mhtprod!(m.objs, x, m.θ, v, Hmtv, obj_weight)
+    return Hmtv
+end
+
+function mhtprod!(m::ExaModel, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x)))
+    fill!(Hmtv, zero(eltype(Hmtv)))
+    _obj_mhtprod!(m.objs, x, m.θ, v, Hmtv, obj_weight)
+    _con_mhtprod!(m.cons, x, m.θ, y, v, Hmtv, obj_weight)
+    return Hmtv
+end
+
+_obj_mhtprod!(objs::ObjectiveNull, x, θ, v, Hmtv, obj_weight) = nothing
+function _obj_mhtprod!(objs, x, θ, v, Hmtv, obj_weight)
+    _obj_mhtprod!(objs.inner, x, θ, v, Hmtv, obj_weight)
+    smhessian!((Hmtv, v), nothing, objs, x, θ, obj_weight)
+end
+
+_con_mhtprod!(cons::ConstraintNull, x, θ, y, v, Hmtv, obj_weight) = nothing
+function _con_mhtprod!(cons, x, θ, y, v, Hmtv, obj_weight)
+    _con_mhtprod!(cons.inner, x, θ, y, v, Hmtv, obj_weight)
+    smhessian!((Hmtv, v), nothing, cons, x, θ, y)
 end
 
 @inbounds @inline offset0(a, i) = offset0(a.f, i)
