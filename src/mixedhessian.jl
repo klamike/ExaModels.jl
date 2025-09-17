@@ -86,7 +86,7 @@ end
     t1::SecondAdjointNodeVar,
     t2::SecondAdjointParameterNode,
     comp_mixed,
-    y1,
+    y1::AbstractVector,
     y2::Nothing,
     o2mixed,
     cnt,
@@ -94,6 +94,22 @@ end
 )
     cnt += 1
     @inbounds y1[o2mixed + comp_mixed(cnt)] += adj
+    cnt
+end
+
+@inline function mhdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp_mixed,
+    y1::Tuple,
+    y2::Nothing,
+    o2mixed,
+    cnt,
+    adj,
+)
+    cnt += 1
+    Hmtv, v = y1
+    @inbounds Hmtv[o2mixed + comp_mixed(cnt)] += adj * v[t1.i]
     cnt
 end
 # pv
@@ -130,7 +146,7 @@ end
     t1::SecondAdjointParameterNode,
     t2::SecondAdjointNodeVar,
     comp_mixed,
-    y1,
+    y1::AbstractVector,
     y2::Nothing,
     o2mixed,
     cnt,
@@ -138,6 +154,22 @@ end
 )
     cnt += 1
     @inbounds y1[o2mixed + comp_mixed(cnt)] += adj
+    cnt
+end
+
+@inline function mhdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp_mixed,
+    y1::Tuple,
+    y2::Nothing,
+    o2mixed,
+    cnt,
+    adj,
+)
+    cnt += 1
+    Hmtv, v = y1
+    @inbounds Hmtv[o2mixed + comp_mixed(cnt)] += adj * v[t2.i]
     cnt
 end
 
@@ -200,6 +232,21 @@ end
 )
     cnt = mhdrpass(t1.inner1, t2, comp_mixed, y1, y2, o2mixed, cnt, adj * t1.y1)
     cnt = mhdrpass(t1.inner2, t2, comp_mixed, y1, y2, o2mixed, cnt, adj * t1.y2)
+    cnt
+end
+
+#a₂a₁
+@inline function mhdrpass(
+    t1::SecondAdjointNode2,
+    t2::SecondAdjointNode1,
+    comp_mixed,
+    y1,
+    y2,
+    o2mixed,
+    cnt,
+    adj,
+)
+    cnt = mhdrpass(t1, t2.inner, comp_mixed, y1, y2, o2mixed, cnt, adj * t2.y)
     cnt
 end
 
