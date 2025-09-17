@@ -936,7 +936,7 @@ end
 @kernel function kerjp(y1, y2, @Const(f), @Const(itr), @Const(x), @Const(θ), @Const(adj))
     I = @index(Global)
     @inbounds ExaModels.jrpass(
-        f(itr[I], x, ExaModels.AdjointNodeParameterSource(θ)),
+        f(itr[I], x, ExaModels.AdjointParameterSource(θ)),
         f.pcomp1,
         ExaModels.offset0(f, itr, I),
         y1,
