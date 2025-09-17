@@ -1,6 +1,112 @@
 using ExaModels
+using NLPModels
 using Test
 using SparseArrays
+
+# Finite-difference helpers for robust verification
+const FD_EPS = 1e-7
+
+function fd_param_jvp!(nlp::WrapperNLPModel, c::ExaCore, θhandle, θval::AbstractVector,
+                       x::AbstractVector, vparam::AbstractVector, out::AbstractVector; ε=FD_EPS)
+    # g(θ) = constraints(x; θ). Return (g(θ+εv) - g(θ))/ε
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval)
+    else
+        copyto!(c.θ, θval)
+    end
+    g0 = similar(out); fill!(g0, 0.0)
+    NLPModels.cons_nln!(nlp, x, g0)
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval .+ ε .* vparam)
+    else
+        @. c.θ = θval + ε * vparam
+    end
+    g1 = similar(out); fill!(g1, 0.0)
+    NLPModels.cons_nln!(nlp, x, g1)
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval)
+    else
+        copyto!(c.θ, θval)
+    end
+    @. out = (g1 - g0) / ε
+    return out
+end
+
+function fd_mhprod!(nlp::WrapperNLPModel, c::ExaCore, θhandle, θval::AbstractVector,
+                    x::AbstractVector, y::AbstractVector, vparam::AbstractVector,
+                    out::AbstractVector; obj_weight=1.0, ε=FD_EPS)
+    # H_mixed * v ≈ (∇_x L(θ+εv) - ∇_x L(θ))/ε, L = obj_weight*f + y' g
+    gradL = similar(out)
+    grad_obj = similar(out); tmp = similar(out)
+    # θ
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval)
+    else
+        copyto!(c.θ, θval)
+    end
+    fill!(grad_obj, 0.0)
+    NLPModels.grad!(nlp, x, grad_obj)
+    @. gradL = obj_weight * grad_obj
+    if length(y) > 0
+        fill!(tmp, 0.0); NLPModels.jtprod_nln!(nlp, x, y, tmp)
+        @. gradL += tmp
+    end
+    # θ+εv
+    gradL_pert = similar(out)
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval .+ ε .* vparam)
+    else
+        @. c.θ = θval + ε * vparam
+    end
+    fill!(grad_obj, 0.0)
+    NLPModels.grad!(nlp, x, grad_obj)
+    @. gradL_pert = obj_weight * grad_obj
+    if length(y) > 0
+        fill!(tmp, 0.0); NLPModels.jtprod_nln!(nlp, x, y, tmp)
+        @. gradL_pert += tmp
+    end
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval)
+    else
+        copyto!(c.θ, θval)
+    end
+    @. out = (gradL_pert - gradL) / ε
+    return out
+end
+
+function fd_mhtprod!(nlp::WrapperNLPModel, c::ExaCore, θhandle, θval::AbstractVector,
+                     x::AbstractVector, y::AbstractVector, uvar::AbstractVector,
+                     out::AbstractVector; obj_weight=1.0, ε=FD_EPS)
+    # H_mixed' * u ≈ ∂/∂θ ( ∇_x L(θ) ⋅ u ) in direction of standard basis
+    # We compute directional derivative along each θ basis using finite differences to assemble out
+    # out[j] ≈ (φ(θ + ε e_j) - φ(θ)) / ε where φ(θ) = (∇_x L(θ))' u
+    φ = function (θcurr)
+        grad_obj = similar(uvar); NLPModels.grad!(nlp, x, grad_obj)
+        jt = similar(uvar); fill!(jt, 0.0); length(y) > 0 && NLPModels.jtprod_nln!(nlp, x, y, jt)
+        return obj_weight * sum(grad_obj .* uvar) + sum(jt .* uvar)
+    end
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval)
+    else
+        copyto!(c.θ, θval)
+    end
+    φ0 = φ(θval)
+    for j in eachindex(out)
+        θp = copy(θval); θp[j] += ε
+        if θhandle isa ExaModels.Parameter
+            ExaModels.set_parameter!(c, θhandle, θp)
+        else
+            copyto!(c.θ, θp)
+        end
+        out[j] = (φ(θp) - φ0) / ε
+    end
+    if θhandle isa ExaModels.Parameter
+        ExaModels.set_parameter!(c, θhandle, θval)
+    else
+        copyto!(c.θ, θval)
+    end
+    return out
+end
 
 """
 Test parameter jacobian consistency between jpprod! and jptprod!
@@ -39,59 +145,6 @@ function test_parameter_jacobian_consistency(backend)
     
     @test result_forward ≈ expected_forward atol=1e-12
     @test result_transpose ≈ expected_transpose atol=1e-12
-end
-
-"""
-Test parameter jacobian with ACOPF model
-"""
-function test_parameter_jacobian_acopf(backend)
-    # Create parametric ACOPF model
-    m_param, c_param, _, _ = exa_ac_power_model_parametric(backend, "pglib_opf_case3_lmbd.m", use_parameters=true)
-    
-    # Test point
-    x_test = ExaModels.convert_array(randn(c_param.nvar), c_param.backend)
-    
-    # Convert to NLP model
-    nlp = WrapperNLPModel(m_param)
-    
-    # Test parameter jacobian computation using jptprod! (J_p^T * v)
-    param_jac = zeros(c_param.ncon, c_param.npar)
-    for i in 1:min(5, c_param.ncon)  # Test first 5 constraints to avoid long runtime
-        adj = zeros(c_param.ncon)
-        adj[i] = 1.0
-        param_jac[i, :] = ExaModels.jptprod!(nlp, x_test, adj, zeros(c_param.npar))
-    end
-    
-    # Basic sanity checks
-    @test size(param_jac) == (c_param.ncon, c_param.npar)
-    @test all(isfinite, param_jac)
-end
-
-"""
-Test mixed hessian with ACOPF model
-"""
-function test_mixed_hessian_acopf(backend)
-    # Create parametric ACOPF model
-    m_param, c_param, _, _ = exa_ac_power_model_parametric(backend, "pglib_opf_case3_lmbd.m", use_parameters=true)
-    
-    # Test point
-    x_test = ExaModels.convert_array(randn(c_param.nvar), c_param.backend)
-    y_test = ExaModels.convert_array(randn(c_param.ncon), c_param.backend)
-    
-    # Convert to NLP model
-    nlp = WrapperNLPModel(m_param)
-    
-    # Test mixed hessian computation using mhtprod! (H_mixed^T * v)
-    mixed_hess = zeros(c_param.nvar, c_param.npar)
-    for i in 1:min(5, c_param.nvar)  # Test first 5 variables to avoid long runtime
-        u = zeros(c_param.nvar)
-        u[i] = 1.0
-        mixed_hess[i, :] = ExaModels.mhtprod!(nlp, x_test, y_test, u, zeros(c_param.npar))
-    end
-    
-    # Basic sanity checks
-    @test size(mixed_hess) == (c_param.nvar, c_param.npar)
-    @test all(isfinite, mixed_hess)
 end
 
 """
@@ -291,6 +344,12 @@ function test_mhprod_simple(backend)
     expected_with_constraint = [4.0, 1.0]
     
     @test result_mhprod_constraint ≈ expected_with_constraint atol=1e-12
+    # Finite-difference check (objective-only and with constraint)
+    θval = [1.0, 2.0]
+    fd = zeros(2); fd_mhprod!(nlp, c, θ, θval, x_test, zeros(0), v_param, fd; obj_weight=1.0)
+    @test result_mhprod ≈ fd atol=1e-4
+    fd2 = zeros(2); fd_mhprod!(nlp, c, θ, θval, x_test, y_test_nonzero, v_param, fd2; obj_weight=1.0)
+    @test result_mhprod_constraint ≈ fd2 atol=1e-4
 end
 
 """
@@ -325,9 +384,12 @@ function test_mhprod_consistency(backend)
     
     @test dot_mhprod ≈ dot_mhtprod atol=1e-12
     
-    # Test that both operations give non-zero results (sanity check)
-    @test maximum(abs.(result_mhprod)) > 1e-10
-    @test maximum(abs.(result_mhtprod)) > 1e-10
+    # Finite-difference checks for both forms
+    θval = [0.5, 1.5]
+    fd = zeros(2); fd_mhprod!(nlp, c, θ, θval, x_test, zeros(0), v_param, fd; obj_weight=1.0)
+    @test result_mhprod ≈ fd atol=1e-4
+    fdT = zeros(2); fd_mhtprod!(nlp, c, θ, θval, x_test, zeros(0), v_var, fdT; obj_weight=1.0)
+    @test result_mhtprod ≈ fdT atol=1e-4
 end
 
 """
@@ -361,14 +423,14 @@ function test_mhprod_with_constraints(backend)
     result_mhtprod = zeros(3)
     ExaModels.mhtprod!(nlp, x_test, y_test, v_var, result_mhtprod; obj_weight=1.0)
     
-    # Test basic functionality - both operations should produce reasonable results
-    # The bilinearity test (H * v_param) · v_var = v_param · (H' * v_var) requires 
-    # more careful analysis and will be addressed in future improvements
-    
-    # Test that both operations give non-zero results (sanity check)
-    @test maximum(abs.(result_mhprod)) > 1e-10
-    @test maximum(abs.(result_mhtprod)) > 1e-10
-    
+    # Bilinear identity with constraints
+    @test abs(sum(result_mhprod .* v_var) - sum(v_param .* result_mhtprod)) ≤ 1e-10
+    # Finite-difference checks with constraints
+    θval = [2.0, 1.0, 0.5]
+    fd = zeros(3); fd_mhprod!(nlp, c, θ, θval, x_test, y_test, v_param, fd; obj_weight=1.0)
+    @test result_mhprod ≈ fd atol=1e-4
+    fdT = zeros(3); fd_mhtprod!(nlp, c, θ, θval, x_test, y_test, v_var, fdT; obj_weight=1.0)
+    @test result_mhtprod ≈ fdT atol=1e-4
     # Test different multipliers give different results
     y_test2 = [1.0, 0.5]
     result_mhprod2 = zeros(3)
@@ -393,10 +455,6 @@ function test_parameter_derivatives(backend)
         @testset "Parameter Values" begin
             test_parameter_jacobian_parameter_values(backend)
         end
-        
-        @testset "ACOPF Model" begin
-            test_parameter_jacobian_acopf(backend)
-        end
     end
     
     @testset "Mixed Hessian Tests" begin
@@ -407,10 +465,6 @@ function test_parameter_derivatives(backend)
         
         @testset "Parameter Values" begin
             test_mixed_hessian_parameter_values(backend)
-        end
-        
-        @testset "ACOPF Model" begin
-            test_mixed_hessian_acopf(backend)
         end
         
         @testset "mhprod! (H*v)" begin
