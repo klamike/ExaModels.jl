@@ -134,6 +134,7 @@ function ExaModels.ExaModel(
             conaugptr,
             prodhelper,
         ),
+        c.nnzjp,
     )
 end
 
@@ -319,6 +320,39 @@ function _jac_coord!(backend, y, cons, x, θ)
     synchronize(backend)
 end
 function _jac_coord!(backend, y, cons::ExaModels.ConstraintNull, x, θ) end
+
+function ExaModels.jacp_coord!(
+    m::ExaModels.ExaModel{T,VT,E},
+    x::V,
+    jac::V,
+) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    fill!(jac, zero(eltype(jac)))
+    _jacp_coord!(m.ext.backend, jac, m.cons, x, m.θ)
+    return jac
+end
+function _jacp_coord!(backend, y, cons, x, θ)
+    ExaModels.sjacobianp!(backend, y, nothing, cons, x, θ, one(eltype(y)))
+    _jacp_coord!(backend, y, cons.inner, x, θ)
+    synchronize(backend)
+end
+function _jacp_coord!(backend, y, cons::ExaModels.ConstraintNull, x, θ) end
+
+function ExaModels.jacp_structure!(
+    m::ExaModels.ExaModel{T,VT,E},
+    rows::V,
+    cols::V,
+) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    if !isempty(rows)
+        _jacp_structure!(m.ext.backend, m.cons, rows, cols)
+    end
+    return rows, cols
+end
+function _jacp_structure!(backend, cons, rows, cols)
+    ExaModels.sjacobianp!(backend, rows, cols, cons, nothing, nothing, NaN)
+    _jacp_structure!(backend, cons.inner, rows, cols)
+    synchronize(backend)
+end
+function _jacp_structure!(backend, cons::ExaModels.ConstraintNull, rows, cols) end
 
 function ExaModels.jprod_nln!(
     m::ExaModels.ExaModel{T,VT,E},
@@ -576,6 +610,20 @@ function ExaModels.shessian!(
     end
 end
 
+function ExaModels.sjacobianp!(
+    backend::B,
+    y1,
+    y2,
+    f,
+    x,
+    θ,
+    adj,
+) where {B<:KernelAbstractions.Backend}
+    if !isempty(f.itr)
+        kerjp(backend)(y1, y2, f.f, f.itr, x, θ, adj; ndrange = length(f.itr))
+    end
+end
+
 @kernel function kerh(
     y1,
     y2,
@@ -647,6 +695,21 @@ end
         adj,
     )
 end
+
+@kernel function kerjp(y1, y2, @Const(f), @Const(itr), @Const(x), @Const(θ), @Const(adj))
+    I = @index(Global)
+    @inbounds ExaModels.jrpass(
+        f(itr[I], x, ExaModels.AdjointNodeParameterSource(θ)),
+        f.pcomp1,
+        ExaModels.offset0(f, itr, I),
+        y1,
+        y2,
+        ExaModels.poffset1(f, I),
+        0,
+        adj,
+    )
+end
+
 
 @kernel function kerf(y, @Const(f), @Const(itr), @Const(x), @Const(θ))
     I = @index(Global)

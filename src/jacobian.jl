@@ -34,7 +34,7 @@ end
     cnt = jrpass(d.inner2, comp, i, y1, y2, o1, cnt, adj * d.y2)
     return cnt
 end
-@inline function jrpass(d::D, comp, i, y1, y2, o1, cnt, adj) where {D<:AdjointNodeVar}
+@inline function jrpass(d::D, comp, i, y1, y2, o1, cnt, adj) where {D<:AdjointNode}
     @inbounds y1[o1+comp(cnt+=1)] += adj
     return cnt
 end
@@ -47,7 +47,7 @@ end
     o1,
     cnt,
     adj,
-) where {D<:AdjointNodeVar,V1<:AbstractVector,V2<:AbstractVector}
+) where {D<:AdjointNode,V1<:AbstractVector,V2<:AbstractVector}
     (y, v) = y1
     @inbounds y[i] += adj * v[d.i]
     return (cnt += 1)
@@ -61,7 +61,7 @@ end
     o1,
     cnt,
     adj,
-) where {D<:AdjointNodeVar,V1<:AbstractVector,V2<:AbstractVector}
+) where {D<:AdjointNode,V1<:AbstractVector,V2<:AbstractVector}
     y, v = y2
     @inbounds y[d.i] += adj * v[i]
     return (cnt += 1)
@@ -75,7 +75,7 @@ end
     o1,
     cnt,
     adj,
-) where {D<:AdjointNodeVar,I<:Integer,V<:AbstractVector{I}}
+) where {D<:AdjointNode,I<:Integer,V<:AbstractVector{I}}
     ind = o1 + comp(cnt += 1)
     @inbounds y1[ind] = i
     @inbounds y2[ind] = d.i
@@ -90,7 +90,7 @@ end
     o1,
     cnt,
     adj,
-) where {D<:AdjointNodeVar,I<:Tuple{Tuple{Int,Int},Int},V<:AbstractVector{I}}
+) where {D<:AdjointNode,I<:Tuple{Tuple{Int,Int},Int},V<:AbstractVector{I}}
     ind = o1 + comp(cnt += 1)
     @inbounds y1[ind] = ((i, d.i), ind)
     return cnt
@@ -129,4 +129,39 @@ end
 function sjacobian!(y1, y2, f, p, x, θ, comp, o0, o1, adj)
     graph = f(p, AdjointNodeSource(x), θ)
     jrpass(graph, comp, o0, y1, y2, o1, 0, adj)
+end
+
+"""
+    sjacobianp!(y1, y2, f, x, θ, adj)
+
+Performs sparse jacobian evalution w.r.t. parameters
+
+# Arguments:
+- `y1`: result vector #1
+- `y2`: result vector #2 (only used when evaluating sparsity)
+- `f`: the function to be differentiated in `SIMDFunction` format
+- `x`: variable vector
+- `θ`: parameter vector
+- `adj`: initial adjoint
+"""
+function sjacobianp!(y1, y2, f, x, θ, adj)
+    @simd for i in eachindex(f.itr)
+        @inbounds sjacobianp!(
+            y1,
+            y2,
+            f.f,
+            f.itr[i],
+            x,
+            θ,
+            f.f.pcomp1,
+            offset0(f, i),
+            poffset1(f, i),
+            adj,
+        )
+    end
+end
+
+function sjacobianp!(y1, y2, f, p, x, θ, comp, o0, po1, adj)
+    graph = f(p, x, AdjointNodeParameterSource(θ))
+    jrpass(graph, comp, o0, y1, y2, po1, 0, adj)
 end
