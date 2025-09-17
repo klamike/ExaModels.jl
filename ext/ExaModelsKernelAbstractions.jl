@@ -135,6 +135,7 @@ function ExaModels.ExaModel(
             prodhelper,
         ),
         c.nnzjp,
+        c.nnzmh,
     )
 end
 

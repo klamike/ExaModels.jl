@@ -296,6 +296,11 @@ struct SecondAdjointNodeVar{I,T} <: AbstractSecondAdjointNode
     x::T
 end
 
+struct SecondAdjointParameterNode{I,T} <: AbstractSecondAdjointNode
+    i::I
+    x::T
+end
+
 """
     SecondAdjointNodeSource{VT}
 
@@ -305,6 +310,10 @@ A source of `AdjointNode`. `adjoint_node_source[i]` returns an `AdjointNodeVar` 
 - `inner::VT`: variable vector
 """
 struct SecondAdjointNodeSource{VT}
+    inner::VT
+end
+
+struct SecondAdjointParameterSource{VT}
     inner::VT
 end
 
@@ -327,6 +336,11 @@ end
     SecondAdjointNodeVar(i, NaN)
 @inline Base.getindex(x::I, i) where {I<:SecondAdjointNodeSource} =
     @inbounds SecondAdjointNodeVar(i, x.inner[i])
+
+@inline Base.getindex(x::SecondAdjointParameterSource{Nothing}, i) =
+    SecondAdjointParameterNode(i, NaN)
+@inline Base.getindex(x::SecondAdjointParameterSource, i) =
+    @inbounds SecondAdjointParameterNode(i, x.inner[i])
 
 
 @inline (v::Null{Nothing})(i, x::V, θ) where {T,V<:AbstractVector{T}} = zero(T)
