@@ -38,6 +38,7 @@ include("luksan.jl")
 include("power.jl")
 include("luksan_struct.jl")
 include("parameter_test.jl")
+include("parameter_derivatives_test.jl")
 
 function test_nlp(m1, m2; full = false)
     @testset "NLP meta tests" begin
@@ -185,6 +186,10 @@ function runtests()
 
                 @testset "Parameter Test" begin
                     test_parametric_vs_nonparametric(backend)
+                end
+                
+                @testset "Parameter AD" begin
+                    test_parameter_derivatives(backend)
                 end
             end
         end
