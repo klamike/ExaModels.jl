@@ -336,6 +336,53 @@ function mhtprod!(
     return Hmtv
 end
 
+function mhprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    v::AbstractVector,
+    Hmv::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.p_buffer, m.p_result, v)
+
+    mhprod!(
+        m.inner,
+        m.x_buffer,
+        m.p_buffer,
+        m.grad_buffer;
+        obj_weight = obj_weight,
+    )
+
+    buffered_copyto!(Hmv, m.x_result, m.grad_buffer)
+    return Hmv
+end
+
+function mhprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    y::AbstractVector,
+    v::AbstractVector,
+    Hmv::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.y_buffer, m.y_result, y)
+    buffered_copyto!(m.p_buffer, m.p_result, v)
+
+    mhprod!(
+        m.inner,
+        m.x_buffer,
+        m.y_buffer,
+        m.p_buffer,
+        m.grad_buffer;
+        obj_weight = obj_weight,
+    )
+
+    buffered_copyto!(Hmv, m.x_result, m.grad_buffer)
+    return Hmv
+end
+
 # TimedNLPModels
 
 Base.@kwdef mutable struct CallbackStats
