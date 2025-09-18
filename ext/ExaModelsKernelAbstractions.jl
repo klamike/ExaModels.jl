@@ -721,11 +721,6 @@ end
     idx = @index(Global)
     @inbounds for l = ptr[idx]:(ptr[idx+1]-1)
         ((i, j), ind) = coord[l]
-        # Add bounds checking to identify invalid indices
-        if j < 1 || j > length(y) || i < 1 || i > length(x)
-            # Skip invalid coordinates instead of crashing
-            continue
-        end
         y[j] += V[ind] * x[i]
     end
 end
