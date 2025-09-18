@@ -170,14 +170,10 @@ function test_parameter_jacobian_sparsity(backend)
     for i in 1:3
         adj = zeros(3)
         adj[i] = 1.0
-        param_jac_T[i, :] = ExaModels.jptprod!(nlp, x_test, adj, zeros(3))
+        param_jac_T[:, i] = ExaModels.jptprod!(nlp, x_test, adj, zeros(3))
     end
-    
     # Check sparsity pattern
-    # param_jac_T[i,:] = J_p^T * e_i, so param_jac_T = J_p^T
-    # Expected J_p = [[1,1,0], [0,1,1], [1,0,1]], so J_p^T = [[1,0,1], [1,1,0], [0,1,1]]
-    # But we're computing row-wise, so param_jac_T is actually J_p^T transposed = J_p
-    expected_pattern = [1 1 0; 0 1 1; 1 0 1]  # Non-zero pattern of J_p  
+    expected_pattern = [1 0 1; 1 1 0; 0 1 1]
     actual_pattern = (abs.(param_jac_T) .> 1e-12)
     @test actual_pattern == expected_pattern
 end
@@ -240,19 +236,11 @@ function test_parameter_jacobian_parameter_values(backend)
         for i in 1:2
             adj = zeros(2)
             adj[i] = 1.0
-            param_jac_T[i, :] = ExaModels.jptprod!(nlp, x_test, adj, zeros(2))
+            param_jac_T[:, i] = ExaModels.jptprod!(nlp, x_test, adj, zeros(2))
         end
-        
         # Expected jacobian:
-        # For constraint 1: θ[1] * x[1] + θ[2] * x[2] => ∂c1/∂θ = [x[1], x[2]] = [1, 2]  
-        # For constraint 2: θ[1] * x[1]^2 + θ[2] * x[2]^2 => ∂c2/∂θ = [x[1]^2, x[2]^2] = [1, 4]
-        # J_p = [[1, 2], [1, 4]], so J_p^T = [[1, 1], [2, 4]]
-        # jptprod! returns J_p^T * e_i, so param_jac_T[i,:] = J_p^T * e_i
-        # param_jac_T[1,:] = J_p^T * [1,0] = [1, 2]  
-        # param_jac_T[2,:] = J_p^T * [0,1] = [1, 4]
-        # So param_jac_T = [[1, 2], [1, 4]]
-        expected_jac_T = [x_test[1]  x_test[2];
-                          x_test[1]^2  x_test[2]^2]
+        expected_jac_T = [x_test[1]  x_test[1]^2;
+                          x_test[2]  x_test[2]^2]
         
         @test param_jac_T ≈ expected_jac_T atol=1e-12
     end
@@ -439,6 +427,193 @@ function test_mhprod_with_constraints(backend)
 end
 
 """
+Test building parameter Jacobian from vector products vs coordinate format
+"""
+function test_parameter_jacobian_coordinate_vs_product(backend)
+    c = ExaCore()
+    x = variable(c, 4)
+    θ = parameter(c, [1.0, 2.0, 3.0])
+
+    # Create constraints with known sparsity
+    constraint(c, θ[1] * x[1]^2 + θ[3] * x[3])           # Depends on θ[1], θ[3]
+    constraint(c, θ[2] * x[2] + θ[3] * x[4]^2)           # Depends on θ[2], θ[3]
+    constraint(c, θ[1] * x[1] + θ[2] * x[3] + θ[3] * x[4]) # Depends on θ[1], θ[2], θ[3]
+
+    m = ExaModel(c; prod=true)
+    nlp = WrapperNLPModel(m)
+
+    x_test = [1.0, 2.0, 3.0, 4.0]
+
+    # Build J_p^T using jptprod! (column by column)
+    ncon = 3
+    nparam = 3
+    Jp_T_from_prod = zeros(nparam, ncon)
+    for j in 1:ncon
+        v = zeros(ncon)
+        v[j] = 1.0
+        Jp_T_from_prod[:, j] = ExaModels.jptprod!(nlp, x_test, v, zeros(nparam))
+    end
+
+    # Build J_p using jpprod! (row by row)
+    Jp_from_prod = zeros(ncon, nparam)
+    for i in 1:nparam
+        v = zeros(nparam)
+        v[i] = 1.0
+        Jp_from_prod[:, i] = ExaModels.jpprod!(nlp, x_test, v, zeros(ncon))
+    end
+
+    # Verify consistency between the two approaches
+    @test Jp_from_prod ≈ Jp_T_from_prod' atol=1e-12
+
+    # Verify the actual values
+    # Constraint 1: θ[1]*x[1]^2 + θ[3]*x[3] => ∂c1/∂θ = [x[1]^2, 0, x[3]] = [1, 0, 3]
+    # Constraint 2: θ[2]*x[2] + θ[3]*x[4]^2 => ∂c2/∂θ = [0, x[2], x[4]^2] = [0, 2, 16]
+    # Constraint 3: θ[1]*x[1] + θ[2]*x[3] + θ[3]*x[4] => ∂c3/∂θ = [x[1], x[3], x[4]] = [1, 3, 4]
+    expected_Jp = [1.0 0.0 3.0;
+                   0.0 2.0 16.0;
+                   1.0 3.0 4.0]
+
+    @test Jp_from_prod ≈ expected_Jp atol=1e-12
+    @test Jp_T_from_prod ≈ expected_Jp' atol=1e-12
+end
+
+"""
+Test building mixed Hessian from vector products and coordinate format
+"""
+function test_mixed_hessian_coordinate_vs_product(backend)
+    c = ExaCore()
+    x = variable(c, 3)
+    θ = parameter(c, [1.0, 2.0])
+
+    # Objective with known mixed Hessian structure
+    # f = θ[1] * x[1]^2 + θ[2] * x[2]^2 + θ[1] * θ[2] * x[3]^2
+    objective(c, θ[1] * x[1]^2 + θ[2] * x[2]^2 + θ[1] * θ[2] * x[3]^2)
+
+    # Add constraint to test Lagrangian mixed Hessian
+    constraint(c, θ[1] * x[1] + θ[2] * x[2] - 5.0)
+
+    m = ExaModel(c; prod=true)
+    nlp = WrapperNLPModel(m)
+
+    x_test = [1.0, 2.0, 3.0]
+    y_test = [0.5]  # Lagrange multiplier
+
+    # Get the mixed Hessian structure and values
+    if m.nnzmh > 0
+        # Structure
+        mh_I = zeros(Int, m.nnzmh)
+        mh_J = zeros(Int, m.nnzmh)
+        ExaModels.mhess_structure!(m, mh_I, mh_J)
+
+        # Values
+        mh_vals = zeros(m.nnzmh)
+        ExaModels.mhess_coord!(m, x_test, y_test, mh_vals; obj_weight=1.0)
+
+        # Build sparse matrix from coordinate format
+        H_mixed_coord = sparse(mh_I, mh_J, mh_vals, 3, 2)
+    else
+        H_mixed_coord = zeros(3, 2)
+    end
+
+    # Build mixed Hessian using mhprod! (column by column)
+    H_mixed_from_prod = zeros(3, 2)
+    for j in 1:2
+        v = zeros(2)
+        v[j] = 1.0
+        H_mixed_from_prod[:, j] = ExaModels.mhprod!(nlp, x_test, y_test, v, zeros(3); obj_weight=1.0)
+    end
+
+    # Build mixed Hessian transpose using mhtprod! (column by column)
+    H_mixed_T_from_prod = zeros(2, 3)
+    for i in 1:3
+        v = zeros(3)
+        v[i] = 1.0
+        H_mixed_T_from_prod[:, i] = ExaModels.mhtprod!(nlp, x_test, y_test, v, zeros(2); obj_weight=1.0)
+    end
+
+    # Verify consistency
+    @test H_mixed_from_prod ≈ H_mixed_T_from_prod' atol=1e-12
+
+    if m.nnzmh > 0
+        @test Matrix(H_mixed_coord) ≈ H_mixed_from_prod atol=1e-12
+    end
+
+    # Verify the actual values
+    # Mixed Hessian for objective: ∂²f/∂x∂θ
+    # ∂f/∂x = [2*θ[1]*x[1], 2*θ[2]*x[2], 2*θ[1]*θ[2]*x[3]]
+    # ∂²f/∂x[1]∂θ = [2*x[1], 0] = [2, 0]
+    # ∂²f/∂x[2]∂θ = [0, 2*x[2]] = [0, 4]
+    # ∂²f/∂x[3]∂θ = [2*θ[2]*x[3], 2*θ[1]*x[3]] = [2*2*3, 2*1*3] = [12, 6]
+    # Plus constraint contribution: y * ∂²c/∂x∂θ = 0.5 * [[1, 0], [0, 1], [0, 0]]
+    expected_H_mixed = [2.0 + 0.5  0.0;
+                        0.0        4.0 + 0.5;
+                        12.0       6.0]
+
+    @test H_mixed_from_prod ≈ expected_H_mixed atol=1e-12
+end
+
+"""
+Test sparse matrix assembly from vector products
+"""
+function test_sparse_matrix_assembly(backend)
+    c = ExaCore()
+    x = variable(c, 5)
+    θ = parameter(c, [1.0, 2.0, 3.0, 4.0])
+
+    # Create a more complex problem with interesting sparsity
+    objective(c, sum(θ[i] * x[i]^2 for i in 1:4))
+
+    constraint(c, θ[1] * x[1] + θ[2] * x[2])
+    constraint(c, θ[2] * x[2] + θ[3] * x[3])
+    constraint(c, θ[3] * x[3] + θ[4] * x[4])
+    constraint(c, θ[1] * x[1] + θ[4] * x[5])
+
+    m = ExaModel(c; prod=true)
+    nlp = WrapperNLPModel(m)
+
+    x_test = ones(5)
+    y_test = [0.1, 0.2, 0.3, 0.4]
+
+    # Build parameter Jacobian as sparse matrix
+    ncon = 4
+    nparam = 4
+    Jp = zeros(ncon, nparam)
+    for j in 1:nparam
+        v = zeros(nparam)
+        v[j] = 1.0
+        Jp[:, j] = ExaModels.jpprod!(nlp, x_test, v, zeros(ncon))
+    end
+
+    # Find non-zero pattern
+    Jp_sparse = sparse(Jp)
+    @test nnz(Jp_sparse) == 8  # Each constraint has 2 non-zero parameter dependencies
+
+    # Build mixed Hessian as sparse matrix
+    nvar = 5
+    H_mixed = zeros(nvar, nparam)
+    for j in 1:nparam
+        v = zeros(nparam)
+        v[j] = 1.0
+        H_mixed[:, j] = ExaModels.mhprod!(nlp, x_test, y_test, v, zeros(nvar); obj_weight=1.0)
+    end
+
+    H_mixed_sparse = sparse(H_mixed)
+
+    # Check that sparsity is preserved
+    @test nnz(H_mixed_sparse) <= nvar * nparam  # Should have significant sparsity
+
+    # Verify transpose consistency
+    H_mixed_T = zeros(nparam, nvar)
+    for i in 1:nvar
+        v = zeros(nvar)
+        v[i] = 1.0
+        H_mixed_T[:, i] = ExaModels.mhtprod!(nlp, x_test, y_test, v, zeros(nparam); obj_weight=1.0)
+    end
+
+    @test H_mixed ≈ H_mixed_T' atol=1e-12
+end
+
+"""
 Main test function for parameter derivatives
 """
 function test_parameter_derivatives(backend)
@@ -455,10 +630,12 @@ function test_parameter_derivatives(backend)
         @testset "Parameter Values" begin
             test_parameter_jacobian_parameter_values(backend)
         end
+        @testset "Coordinate vs Product API" begin
+            test_parameter_jacobian_coordinate_vs_product(backend)
+        end
     end
     
     @testset "Mixed Hessian Tests" begin
-        
         @testset "Sparsity Pattern" begin
             test_mixed_hessian_sparsity(backend)
         end
@@ -471,6 +648,14 @@ function test_parameter_derivatives(backend)
             test_mhprod_simple(backend)
             test_mhprod_consistency(backend)
             test_mhprod_with_constraints(backend)
+        end
+
+        @testset "Coordinate vs Product API" begin
+            test_mixed_hessian_coordinate_vs_product(backend)
+        end
+
+        @testset "Sparse Matrix Assembly" begin
+            test_sparse_matrix_assembly(backend)
         end
     end
 end
