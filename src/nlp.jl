@@ -713,13 +713,13 @@ end
 _obj_mhess_structure!(objs::ObjectiveNull, rows, cols) = nothing
 function _obj_mhess_structure!(objs, rows, cols)
     _obj_mhess_structure!(objs.inner, rows, cols)
-    smhessian!(nothing, (rows, cols), objs, similar(rows, Float64, 0), similar(rows, Float64, 0), one(Float64))
+    smhessian!(rows, cols, objs, nothing, nothing, one(Float64))
 end
 
 _con_mhess_structure!(cons::ConstraintNull, rows, cols) = nothing
 function _con_mhess_structure!(cons, rows, cols)
     _con_mhess_structure!(cons.inner, rows, cols)
-    smhessian!(nothing, (rows, cols), cons, similar(rows, Float64, 0), similar(rows, Float64, 0), similar(rows, Float64, 0))
+    smhessian!(rows, cols, cons, nothing, nothing, NaN)
 end
 
 function obj(m::ExaModel, x::AbstractVector)
