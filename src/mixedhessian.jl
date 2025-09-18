@@ -144,21 +144,6 @@ end
     cnt
 end
 @inline function mhdrpass(
-    t_par::SecondAdjointParameterNode,
-    t_var::SecondAdjointNodeVar,
-    comp_mixed::Nothing,
-    rows::V,
-    cols::V,
-    o2mixed,
-    cnt,
-    adj,
-) where {I<:Integer,V<:AbstractVector{I}}
-    cnt += 1
-    @inbounds rows[cnt] = t_var.i
-    @inbounds cols[cnt] = t_par.i
-    cnt
-end
-@inline function mhdrpass(
     t1::SecondAdjointParameterNode,
     t2::SecondAdjointNodeVar,
     comp_mixed,
