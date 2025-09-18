@@ -80,11 +80,11 @@ end
     cnt = grpass(d.inner2, comp, y, o1, cnt, adj * d.y2)
     return cnt
 end
-@inline function grpass(d::D, comp, y, o1, cnt, adj) where {D<:AdjointNodeVar}
+@inline function grpass(d::D, comp, y, o1, cnt, adj) where {D<:AdjointNode}
     @inbounds y[o1+comp(cnt+=1)] += adj
     return cnt
 end
-@inline function grpass(d::AdjointNodeVar, comp::Nothing, y, o1, cnt, adj) # despecialization
+@inline function grpass(d::AdjointNode, comp::Nothing, y, o1, cnt, adj) # despecialization
     push!(y, d.i)
     return (cnt += 1)
 end

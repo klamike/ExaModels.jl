@@ -13,22 +13,28 @@ struct Compressor{I}
 end
 @inline (i::Compressor{I})(n) where {I} = @inbounds i.inner[n]
 
-struct SIMDFunction{F,C1,C2}
+struct SIMDFunction{F,C1,C2,PC1,PC2}
     f::F
     comp1::C1
     comp2::C2
+    pcomp1::PC1
+    mcomp2::PC2
     o0::Int
     o1::Int
     o2::Int
+    po1::Int
+    mo2::Int
     o1step::Int
     o2step::Int
+    po1step::Int
+    mo2step::Int
 end
 
-@inline (sf::SIMDFunction{F,C1,C2})(i, x, θ) where {F,C1,C2} = sf.f(i, x, θ)
-@inline (sf::SIMDFunction{F,C1,C2})(i, x, θ) where {F <: Real,C1,C2} = sf.f
+@inline (sf::SIMDFunction{F,C1,C2,PC1,PC2})(i, x, θ) where {F,C1,C2,PC1,PC2} = sf.f(i, x, θ)
+@inline (sf::SIMDFunction{F,C1,C2,PC1,PC2})(i, x, θ) where {F <: Real,C1,C2,PC1,PC2} = sf.f
 
 """
-    SIMDFunction(gen::Base.Generator, o0 = 0, o1 = 0, o2 = 0)
+    SIMDFunction(gen::Base.Generator, o0 = 0, o1 = 0, o2 = 0, po1 = 0, mo2 = 0)
 
 Returns a `SIMDFunction` using the `gen`.
 
@@ -37,28 +43,36 @@ Returns a `SIMDFunction` using the `gen`.
 - `o0`: offset for the function evaluation
 - `o1`: offset for the derivative evalution
 - `o2`: offset for the second-order derivative evalution
+- `po1`: offset for the parameter derivative evalution
+- `mo2`: offset for the mixed hessian evalution
 """
-function SIMDFunction(gen::Base.Generator, o0 = 0, o1 = 0, o2 = 0)
+function SIMDFunction(gen::Base.Generator, o0 = 0, o1 = 0, o2 = 0, po1 = 0, mo2 = 0)
 
     f = gen.f(ParSource())
 
-    _simdfunction(f, o0, o1, o2)
+    _simdfunction(f, o0, o1, o2, po1, mo2)
 end
 
-function _simdfunction(f::F, o0, o1, o2) where {F<:Real}
+function _simdfunction(f::F, o0, o1, o2, po1, mo2) where {F<:Real}
     SIMDFunction(
         f,
+        ExaModels.Compressor{Tuple{}}(()),
+        ExaModels.Compressor{Tuple{}}(()),
         ExaModels.Compressor{Tuple{}}(()),
         ExaModels.Compressor{Tuple{}}(()),
         o0,
         o1,
         o2,
+        po1,
+        mo2,
+        0,
+        0,
         0,
         0,
     )
 end
 
-function _simdfunction(f, o0, o1, o2)
+function _simdfunction(f, o0, o1, o2, po1, mo2)
     d = f(Identity(), AdjointNodeSource(nothing), nothing)
     y1 = []
     ExaModels.grpass(d, nothing, y1, nothing, 0, NaN)
@@ -75,5 +89,21 @@ function _simdfunction(f, o0, o1, o2)
     o2step = length(a2)
     c2 = Compressor(Tuple(findfirst(isequal(i), a2) for i in y2))
 
-    SIMDFunction(f, c1, c2, o0, o1, o2, o1step, o2step)
+    pd = f(Identity(), nothing, AdjointParameterSource(nothing))
+    py1 = []
+    ExaModels.grpass(pd, nothing, py1, nothing, 0, NaN)
+
+    mt = f(Identity(), SecondAdjointNodeSource(nothing), SecondAdjointParameterSource(nothing))
+    my2 = []
+    ExaModels.mhrpass0(mt, nothing, my2, 0, 0, NaN)
+
+    pa1 = unique(py1)
+    po1step = length(pa1)
+    pc1 = Compressor(Tuple(findfirst(isequal(i), pa1) for i in py1))
+
+    ma2 = unique(my2)
+    mo2step = length(ma2)
+    mc2 = Compressor(Tuple(findfirst(isequal(i), ma2) for i in my2))
+
+    SIMDFunction(f, c1, c2, pc1, mc2, o0, o1, o2, po1, mo2, o1step, o2step, po1step, mo2step)
 end
