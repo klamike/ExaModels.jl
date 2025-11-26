@@ -813,6 +813,17 @@ function MOI.get(
     return rc
 end
 
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.ConstraintDual,
+    ci::MOI.ConstraintIndex{MOI.VariableIndex,MOI.Interval{Float64}},
+)
+    MOI.check_result_index_bounds(model, attr)
+    # MOI.throw_if_not_valid(model, ci)
+    rc = model.result.multipliers_L[ci.value] - model.result.multipliers_U[ci.value]
+    return rc
+end
+
 
 function MOI.get(model::Optimizer, ::MOI.ResultCount)
     return (model.result !== nothing) ? 1 : 0
