@@ -62,14 +62,12 @@ function check_supported(T, moim)
         end
     end
 
+    obj_sense = MOI.get(moim, MOI.ObjectiveSense())
     obj_type = MOI.get(moim, MOI.ObjectiveFunctionType())
     !(obj_type <: SUPPORTED_FUNC_TYPE_WITH_VAR) &&
         error("Unsupported objective function type $obj_type.")
 
-    obj_sense = MOI.get(moim, MOI.ObjectiveSense())
-    !(obj_sense in (MOI.MIN_SENSE, MOI.MAX_SENSE)) &&
-        error("Unsupported objective sense $obj_sense.")
-    return obj_sense === MOI.MIN_SENSE
+    return obj_sense !== MOI.MAX_SENSE
 end
 
 function ExaModels.ExaModel(
@@ -177,6 +175,13 @@ function copy_variables!(c, moim, T)
 end
 
 function copy_objective!(c, moim, var_to_idx)
+    obj_sense = MOI.get(moim, MOI.ObjectiveSense())
+    if obj_sense == MOI.FEASIBILITY_SENSE
+        bin = BinNull()
+        bin = update_bin!(bin, ExaModels.Null(0.0), (1,))  # min 0
+        build_objective!(c, bin)
+        return
+    end
     obj_type = MOI.get(moim, MOI.ObjectiveFunctionType())
 
     bin = BinNull()
