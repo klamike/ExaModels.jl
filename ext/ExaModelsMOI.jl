@@ -721,6 +721,8 @@ end
 
 function MOI.empty!(model::ExaModelsMOI.Optimizer)
     model.model = nothing
+    model.result = nothing
+    model.solve_time = 0.0
 end
 
 function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
