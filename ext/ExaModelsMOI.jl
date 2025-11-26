@@ -693,22 +693,22 @@ MOI.is_empty(model::Optimizer) = isnothing(model.model)
 
 function MOI.supports_constraint(
     ::Optimizer,
-    ::Type{<:SUPPORTED_FUNC_TYPE},
-    ::Type{<:SUPPORTED_FUNC_SET_TYPE},
+    ::Type{<:SUPPORTED_FUNC_TYPE{Float64}},
+    ::Type{<:SUPPORTED_FUNC_SET_TYPE{Float64}},
 )
     return true
 end
 function MOI.supports_constraint(
     ::Optimizer,
     ::Type{MOI.VariableIndex},
-    ::Type{<:SUPPORTED_VAR_SET_TYPE},
+    ::Type{<:SUPPORTED_VAR_SET_TYPE{Float64}},
 )
     return true
 end
 function MOI.supports(::Optimizer, ::MOI.ObjectiveSense)
     return true
 end
-function MOI.supports(::Optimizer, ::MOI.ObjectiveFunction{<:SUPPORTED_FUNC_TYPE_WITH_VAR})
+function MOI.supports(::Optimizer, ::MOI.ObjectiveFunction{<:SUPPORTED_FUNC_TYPE_WITH_VAR{Float64}})
     return true
 end
 function MOI.supports(::Optimizer, ::MOI.VariablePrimalStart, ::Type{MOI.VariableIndex})
