@@ -745,10 +745,18 @@ function MOI.optimize!(optimizer::Optimizer)
     return optimizer
 end
 
-MOI.get(optimizer::Optimizer, ::MOI.TerminationStatus) =
-    ExaModels.termination_status_translator(optimizer.solver, optimizer.result.status)
-MOI.get(model::Optimizer, attr::Union{MOI.PrimalStatus,MOI.DualStatus}) =
-    ExaModels.result_status_translator(model.solver, model.result.status)
+function MOI.get(model::Optimizer, ::MOI.TerminationStatus)
+    if isnothing(model.result)
+        return MOI.OPTIMIZE_NOT_CALLED
+    end
+    return ExaModels.termination_status_translator(model.solver, model.result.status)
+end
+function MOI.get(model::Optimizer, attr::Union{MOI.PrimalStatus,MOI.DualStatus})
+    if !(1 <= attr.result_index <= MOI.get(model, MOI.ResultCount()))
+        return MOI.NO_SOLUTION
+    end
+    return ExaModels.result_status_translator(model.solver, model.result.status)
+end
 
 function MOI.get(model::Optimizer, attr::MOI.VariablePrimal, vi::MOI.VariableIndex)
     MOI.check_result_index_bounds(model, attr)
