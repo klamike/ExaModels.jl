@@ -820,6 +820,7 @@ MOI.get(
     model::Optimizer,
     ::MOI.SolverName,
 ) = "$(string(model.solver)) running with ExaModels"
+MOI.get(::Optimizer, ::MOI.SolverVersion) = string(pkgversion(ExaModels))
 
 function MOI.set(model::Optimizer, p::MOI.RawOptimizerAttribute, value)
     model.options[Symbol(p.name)] = value
