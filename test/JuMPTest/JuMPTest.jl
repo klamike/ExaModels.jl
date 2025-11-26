@@ -1,6 +1,6 @@
 module JuMPTest
 
-using Test, JuMP, ExaModels, PowerModels, NLPModelsIpopt, ..NLPTest
+using Test, JuMP, ExaModels, PowerModels, NLPModelsIpopt, MadNLP, ..NLPTest
 
 import ..BACKENDS
 
@@ -309,6 +309,55 @@ function runtests()
             fixed_variable_e2etest()
             no_constraints_e2etest()
         end
+    end
+
+    @testset "MOI tests with MadNLP" begin
+        MOI.Test.runtests(MOI.instantiate(MOI.OptimizerWithAttributes(
+            () -> ExaModels.Optimizer(madnlp), "print_level" => MadNLP.ERROR
+        ), with_bridge_type = Float64),
+        MOI.Test.Config(
+            atol = 1e-4, rtol = 1e-4,
+            optimal_status = MOI.LOCALLY_SOLVED,
+            infeasible_status = MOI.LOCALLY_INFEASIBLE,
+            exclude = Any[
+                # from madnlp:
+                MOI.ConstraintBasisStatus,
+                MOI.DualObjectiveValue,
+                MOI.ObjectiveBound,
+            ],
+        ),
+        exclude=[
+            "test_attribute_RawStatusString",  #  not implemented yet
+            "test_model_copy_to_UnsupportedAttribute",  #  since we pass-through
+            "test_model_LowerBoundAlreadySet",  # not sure what the problem is here (need to implement MOI.delete even though we don't support incremental?)
+            "test_model_UpperBoundAlreadySet",
+
+            # from madnlp:
+
+            # TODO: MadNLP does not return the correct multiplier
+            # when a variable is fixed with MOI.EqualTo (Issue #229).
+            r"^test_linear_integration$",
+            "test_quadratic_constraint_GreaterThan",
+            "test_quadratic_constraint_LessThan",
+            # MadNLP reaches maximum number of iterations instead
+            # of returning infeasibility certificate.
+            r"test_linear_DUAL_INFEASIBLE.*",
+            "test_solve_TerminationStatus_DUAL_INFEASIBLE",
+            # Tests excluded on purpose
+            # - Excluded because Hessian information is needed
+            "test_nonlinear_hs071_hessian_vector_product",
+            # - Excluded because Hessian information is needed
+            "test_nonlinear_invalid",
+
+            #  - Excluded because this test is optional
+            "test_model_ScalarFunctionConstantNotZero",
+            # Throw an error: "Unable to query the dual of a variable
+            # bound that was reformulated using `ZerosBridge`."
+            "test_linear_VectorAffineFunction_empty_row",
+            "test_conic_linear_VectorOfVariables_2",
+            # TODO: investigate why it is breaking.
+            "test_nonlinear_expression_hs109",
+        ])
     end
 end
 
