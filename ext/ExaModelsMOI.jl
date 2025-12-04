@@ -200,8 +200,17 @@ function copy_constraints!(c, moim, var_to_idx, T)
 
     con_types = MOI.get(moim, MOI.ListOfConstraintTypesPresent())
     for (F, S) in con_types
-        F <: MOI.VariableIndex && continue
         cis = MOI.get(moim, MOI.ListOfConstraintIndices{F,S}())
+        if F <: MOI.VariableIndex
+            for ci in cis
+                vi = MOI.get(moim, MOI.ConstraintFunction(), ci)
+                vartype, var_idx = var_to_idx[vi]
+                if vartype === :variable
+                    con_to_idx[ci] = var_idx
+                end
+            end
+            continue
+        end
         bin, offset =
             exafy_con(moim, cis, bin, offset, lcon, ucon, y0, var_to_idx, con_to_idx)
     end
@@ -211,23 +220,6 @@ function copy_constraints!(c, moim, var_to_idx, T)
     return con_to_idx
 end
 
-function _exafy_con(  # FIXME: figure out when this happens
-    i,
-    c::MOI.VariableIndex,
-    bin,
-    var_to_idx,
-    con_to_idx;
-    pos = true,
-)
-    e, p = _exafy(c, var_to_idx)
-    e = pos ? e : -e
-    bin = update_bin!(
-        bin,
-        ExaModels.ParIndexed(ExaModels.ParSource(), length(p) + 1) => e,
-        (p..., con_to_idx[i]),
-    )
-    return bin
-end
 
 function _exafy_con(
     i,
