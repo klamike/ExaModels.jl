@@ -308,6 +308,23 @@ function _exafy_con(i, c::C, bin, var_to_idx, con_to_idx; pos = true) where {C<:
 
     return bin
 end
+function _exafy_con(  # for when ScalarNonlinearFunction has a VariableIndex term
+    i,
+    c::MOI.VariableIndex,
+    bin,
+    var_to_idx,
+    con_to_idx;
+    pos = true,
+)
+    e, p = _exafy(c, var_to_idx)
+    e = pos ? e : -e
+    bin = update_bin!(
+        bin,
+        ExaModels.ParIndexed(ExaModels.ParSource(), length(p) + 1) => e,
+        (p..., con_to_idx[i]),
+    )
+    return bin
+end
 
 function exafy_con(
     moim,
