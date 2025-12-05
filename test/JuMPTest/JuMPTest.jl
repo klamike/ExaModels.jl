@@ -95,7 +95,11 @@ function fixed_variable_e2etest()
 
     jm = JuMP.Model()
     JuMP.@variable(jm, x)
-    @test_broken em = ExaModel(jm)  # FIXME: support feasibility problems?
+    em = ExaModel(jm)
+    objs = em.objs
+    @test typeof(objs.f.f) <: ExaModels.Null
+    @test objs.f.f.value == 0.0
+    @test typeof(objs.inner) <: ExaModels.ObjectiveNull
 
     return jm
 end
