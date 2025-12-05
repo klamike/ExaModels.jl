@@ -62,14 +62,12 @@ function check_supported(T, moim)
         end
     end
 
+    obj_sense = MOI.get(moim, MOI.ObjectiveSense())
     obj_type = MOI.get(moim, MOI.ObjectiveFunctionType())
     !(obj_type <: SUPPORTED_FUNC_TYPE_WITH_VAR) &&
         error("Unsupported objective function type $obj_type.")
 
-    obj_sense = MOI.get(moim, MOI.ObjectiveSense())
-    !(obj_sense in (MOI.MIN_SENSE, MOI.MAX_SENSE)) &&
-        error("Unsupported objective sense $obj_sense.")
-    return obj_sense === MOI.MIN_SENSE
+    return obj_sense !== MOI.MAX_SENSE
 end
 
 function ExaModels.ExaModel(
@@ -177,6 +175,13 @@ function copy_variables!(c, moim, T)
 end
 
 function copy_objective!(c, moim, var_to_idx)
+    obj_sense = MOI.get(moim, MOI.ObjectiveSense())
+    if obj_sense == MOI.FEASIBILITY_SENSE
+        bin = BinNull()
+        bin = update_bin!(bin, ExaModels.Null(0.0), (1,))  # min 0
+        build_objective!(c, bin)
+        return
+    end
     obj_type = MOI.get(moim, MOI.ObjectiveFunctionType())
 
     bin = BinNull()
@@ -195,8 +200,17 @@ function copy_constraints!(c, moim, var_to_idx, T)
 
     con_types = MOI.get(moim, MOI.ListOfConstraintTypesPresent())
     for (F, S) in con_types
-        F <: MOI.VariableIndex && continue
         cis = MOI.get(moim, MOI.ListOfConstraintIndices{F,S}())
+        if F <: MOI.VariableIndex
+            for ci in cis
+                vi = MOI.get(moim, MOI.ConstraintFunction(), ci)
+                vartype, var_idx = var_to_idx[vi]
+                if vartype === :variable
+                    con_to_idx[ci] = var_idx
+                end
+            end
+            continue
+        end
         bin, offset =
             exafy_con(moim, cis, bin, offset, lcon, ucon, y0, var_to_idx, con_to_idx)
     end
@@ -205,6 +219,7 @@ function copy_constraints!(c, moim, var_to_idx, T)
 
     return con_to_idx
 end
+
 
 function _exafy_con(
     i,
@@ -291,6 +306,23 @@ function _exafy_con(i, c::C, bin, var_to_idx, con_to_idx; pos = true) where {C<:
         (c, con_to_idx[i]),
     )
 
+    return bin
+end
+function _exafy_con(  # for when ScalarNonlinearFunction has a VariableIndex term
+    i,
+    c::MOI.VariableIndex,
+    bin,
+    var_to_idx,
+    con_to_idx;
+    pos = true,
+)
+    e, p = _exafy(c, var_to_idx)
+    e = pos ? e : -e
+    bin = update_bin!(
+        bin,
+        ExaModels.ParIndexed(ExaModels.ParSource(), length(p) + 1) => e,
+        (p..., con_to_idx[i]),
+    )
     return bin
 end
 
@@ -688,22 +720,22 @@ MOI.is_empty(model::Optimizer) = isnothing(model.model)
 
 function MOI.supports_constraint(
     ::Optimizer,
-    ::Type{<:SUPPORTED_FUNC_TYPE},
-    ::Type{<:SUPPORTED_FUNC_SET_TYPE},
+    ::Type{<:SUPPORTED_FUNC_TYPE{Float64}},
+    ::Type{<:SUPPORTED_FUNC_SET_TYPE{Float64}},
 )
     return true
 end
 function MOI.supports_constraint(
     ::Optimizer,
     ::Type{MOI.VariableIndex},
-    ::Type{<:SUPPORTED_VAR_SET_TYPE},
+    ::Type{<:SUPPORTED_VAR_SET_TYPE{Float64}},
 )
     return true
 end
 function MOI.supports(::Optimizer, ::MOI.ObjectiveSense)
     return true
 end
-function MOI.supports(::Optimizer, ::MOI.ObjectiveFunction{<:SUPPORTED_FUNC_TYPE_WITH_VAR})
+function MOI.supports(::Optimizer, ::MOI.ObjectiveFunction{<:SUPPORTED_FUNC_TYPE_WITH_VAR{Float64}})
     return true
 end
 function MOI.supports(::Optimizer, ::MOI.VariablePrimalStart, ::Type{MOI.VariableIndex})
@@ -716,6 +748,8 @@ end
 
 function MOI.empty!(model::ExaModelsMOI.Optimizer)
     model.model = nothing
+    model.result = nothing
+    model.solve_time = 0.0
 end
 
 function MOI.copy_to(dest::Optimizer, src::MOI.ModelLike)
@@ -740,10 +774,18 @@ function MOI.optimize!(optimizer::Optimizer)
     return optimizer
 end
 
-MOI.get(optimizer::Optimizer, ::MOI.TerminationStatus) =
-    ExaModels.termination_status_translator(optimizer.solver, optimizer.result.status)
-MOI.get(model::Optimizer, attr::Union{MOI.PrimalStatus,MOI.DualStatus}) =
-    ExaModels.result_status_translator(model.solver, model.result.status)
+function MOI.get(model::Optimizer, ::MOI.TerminationStatus)
+    if isnothing(model.result)
+        return MOI.OPTIMIZE_NOT_CALLED
+    end
+    return ExaModels.termination_status_translator(model.solver, model.result.status)
+end
+function MOI.get(model::Optimizer, attr::Union{MOI.PrimalStatus,MOI.DualStatus})
+    if !(1 <= attr.result_index <= MOI.get(model, MOI.ResultCount()))
+        return MOI.NO_SOLUTION
+    end
+    return ExaModels.result_status_translator(model.solver, model.result.status)
+end
 
 function MOI.get(model::Optimizer, attr::MOI.VariablePrimal, vi::MOI.VariableIndex)
     MOI.check_result_index_bounds(model, attr)
@@ -798,6 +840,17 @@ function MOI.get(
     return rc
 end
 
+function MOI.get(
+    model::Optimizer,
+    attr::MOI.ConstraintDual,
+    ci::MOI.ConstraintIndex{MOI.VariableIndex,MOI.Interval{Float64}},
+)
+    MOI.check_result_index_bounds(model, attr)
+    # MOI.throw_if_not_valid(model, ci)
+    rc = model.result.multipliers_L[ci.value] - model.result.multipliers_U[ci.value]
+    return rc
+end
+
 
 function MOI.get(model::Optimizer, ::MOI.ResultCount)
     return (model.result !== nothing) ? 1 : 0
@@ -815,6 +868,7 @@ MOI.get(
     model::Optimizer,
     ::MOI.SolverName,
 ) = "$(string(model.solver)) running with ExaModels"
+MOI.get(::Optimizer, ::MOI.SolverVersion) = string(pkgversion(ExaModels))
 
 function MOI.set(model::Optimizer, p::MOI.RawOptimizerAttribute, value)
     model.options[Symbol(p.name)] = value
