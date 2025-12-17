@@ -144,7 +144,9 @@ Base.@kwdef mutable struct ExaCore{T,VT<:AbstractVector{T},B}
     nnzc::Int = 0
     nnzg::Int = 0
     nnzj::Int = 0
+    nnzjp::Int = 0
     nnzh::Int = 0
+    nnzmh::Int = 0
     x0::VT = convert_array(zeros(0), backend)
     θ::VT = similar(x0, 0)
     lvar::VT = similar(x0)
@@ -194,6 +196,8 @@ struct ExaModel{T,VT,E,O,C} <: NLPModels.AbstractNLPModel{T,VT}
     meta::NLPModels.NLPModelMeta{T,VT}
     counters::NLPModels.Counters
     ext::E
+    nnzjp::Int
+    nnzmh::Int
 end
 
 function Base.show(io::IO, c::ExaModel{T,VT}) where {T,VT}
@@ -260,6 +264,8 @@ function ExaModel(c::C; prod = nothing) where {C<:ExaCore}
         ),
         NLPModels.Counters(),
         nothing,
+        c.nnzjp,
+        c.nnzmh,
     )
 end
 
@@ -483,7 +489,7 @@ Objective
 """
 function objective(c::C, gen) where {C<:ExaCore}
     gen = _adapt_gen(gen)
-    f = SIMDFunction(gen, c.nobj, c.nnzg, c.nnzh)
+    f = SIMDFunction(gen, c.nobj, c.nnzg, c.nnzh, c.nnzjp, c.nnzmh)
     pars = gen.iter
 
     _objective(c, f, pars)
@@ -495,7 +501,7 @@ end
 Adds objective terms specified by a `expr` and `pars` to `core`, and returns an `Objective` object.
 """
 function objective(c::C, expr::N, pars = 1:1) where {C<:ExaCore,N<:AbstractNode}
-    f = _simdfunction(expr, c.nobj, c.nnzg, c.nnzh)
+    f = _simdfunction(expr, c.nobj, c.nnzg, c.nnzh, c.nnzjp, c.nnzmh)
 
     _objective(c, f, pars)
 end
@@ -505,6 +511,7 @@ function _objective(c, f, pars)
     c.nobj += nitr
     c.nnzg += nitr * f.o1step
     c.nnzh += nitr * f.o2step
+    c.nnzmh += nitr * f.mo2step
 
     c.obj = Objective(c.obj, f, convert_array(pars, c.backend))
 end
@@ -545,7 +552,7 @@ function constraint(
 ) where {T,C<:ExaCore{T}}
 
     gen = _adapt_gen(gen)
-    f = SIMDFunction(gen, c.ncon, c.nnzj, c.nnzh)
+    f = SIMDFunction(gen, c.ncon, c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
     pars = gen.iter
 
     _constraint(c, f, pars, start, lcon, ucon)
@@ -565,7 +572,7 @@ function constraint(
     ucon = zero(T),
 ) where {T,C<:ExaCore{T},N<:AbstractNode}
 
-    f = _simdfunction(expr, c.ncon, c.nnzj, c.nnzh)
+    f = _simdfunction(expr, c.ncon, c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
 
     _constraint(c, f, pars, start, lcon, ucon)
 end
@@ -583,7 +590,7 @@ function constraint(
     ucon = zero(T),
 ) where {T,C<:ExaCore{T}}
 
-    f = _simdfunction(Null(), c.ncon, c.nnzj, c.nnzh)
+    f = _simdfunction(Null(), c.ncon, c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
 
     _constraint(c, f, 1:n, start, lcon, ucon)
 end
@@ -594,7 +601,9 @@ function _constraint(c, f, pars, start, lcon, ucon)
     o = c.ncon
     c.ncon += nitr
     c.nnzj += nitr * f.o1step
+    c.nnzjp += nitr * f.po1step
     c.nnzh += nitr * f.o2step
+    c.nnzmh += nitr * f.mo2step
 
     c.y0 = append!(c.backend, c.y0, start, nitr)
     c.lcon = append!(c.backend, c.lcon, lcon, nitr)
@@ -635,7 +644,7 @@ Constraint Augmentation
 function constraint!(c::C, c1, gen::Base.Generator) where {C<:ExaCore}
 
     gen = _adapt_gen(gen)
-    f = SIMDFunction(gen, offset0(c1, 0), c.nnzj, c.nnzh)
+    f = SIMDFunction(gen, offset0(c1, 0), c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
     pars = gen.iter
 
     _constraint!(c, f, pars)
@@ -647,7 +656,7 @@ end
 Expands the existing constraint `c1` in `c` by adding addtional constraints terms specified by `expr` and `pars`.
 """
 function constraint!(c::C, c1, expr, pars) where {C<:ExaCore}
-    f = _simdfunction(expr, offset0(c1, 0), c.nnzj, c.nnzh)
+    f = _simdfunction(expr, offset0(c1, 0), c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
 
     _constraint!(c, f, pars)
 end
@@ -659,6 +668,7 @@ function _constraint!(c, f, pars)
 
     c.nconaug += nitr
     c.nnzj += nitr * f.o1step
+    c.nnzjp += nitr * f.po1step
     c.nnzh += nitr * f.o2step
 
     c.con = ConstraintAug(c.con, f, convert_array(pars, c.backend), oa)
@@ -692,6 +702,24 @@ _con_hess_structure!(cons::ConstraintNull, rows, cols) = nothing
 function _con_hess_structure!(cons, rows, cols)
     _con_hess_structure!(cons.inner, rows, cols)
     shessian!(rows, cols, cons, nothing, nothing, NaN, NaN)
+end
+
+function mhess_structure!(m::ExaModel, rows::AbstractVector, cols::AbstractVector)
+    _obj_mhess_structure!(m.objs, rows, cols)
+    _con_mhess_structure!(m.cons, rows, cols)
+    return rows, cols
+end
+
+_obj_mhess_structure!(objs::ObjectiveNull, rows, cols) = nothing
+function _obj_mhess_structure!(objs, rows, cols)
+    _obj_mhess_structure!(objs.inner, rows, cols)
+    smhessian!(rows, cols, objs, nothing, nothing, one(Float64))
+end
+
+_con_mhess_structure!(cons::ConstraintNull, rows, cols) = nothing
+function _con_mhess_structure!(cons, rows, cols)
+    _con_mhess_structure!(cons.inner, rows, cols)
+    smhessian!(rows, cols, cons, nothing, nothing, NaN)
 end
 
 function obj(m::ExaModel, x::AbstractVector)
@@ -743,6 +771,33 @@ function _jac_coord!(cons, x, θ, jac)
     sjacobian!(jac, nothing, cons, x, θ, one(eltype(jac)))
 end
 
+function jacp_structure!(m::ExaModel, rows::AbstractVector, cols::AbstractVector)
+    _jacp_structure!(m.cons, rows, cols)
+    return rows, cols
+end
+
+_jacp_structure!(cons::ConstraintNull, rows, cols) = nothing
+function _jacp_structure!(cons, rows, cols)
+    _jacp_structure!(cons.inner, rows, cols)
+    if cons.f.po1step > 0
+        sjacobianp!(rows, cols, cons, nothing, nothing, NaN)
+    end
+end
+
+function jacp_coord!(m::ExaModel, x::AbstractVector, jac::AbstractVector)
+    fill!(jac, zero(eltype(jac)))
+    _jacp_coord!(m.cons, x, m.θ, jac)
+    return jac
+end
+
+_jacp_coord!(cons::ConstraintNull, x, θ, jac) = nothing
+function _jacp_coord!(cons, x, θ, jac)
+    _jacp_coord!(cons.inner, x, θ, jac)
+    if cons.f.po1step > 0
+        sjacobianp!(jac, nothing, cons, x, θ, one(eltype(jac)))
+    end
+end
+
 function jprod_nln!(m::ExaModel, x::AbstractVector, v::AbstractVector, Jv::AbstractVector)
     fill!(Jv, zero(eltype(Jv)))
     _jprod_nln!(m.cons, x, m.θ, v, Jv)
@@ -765,6 +820,34 @@ _jtprod_nln!(cons::ConstraintNull, x, θ, v, Jtv) = nothing
 function _jtprod_nln!(cons, x, θ, v, Jtv)
     _jtprod_nln!(cons.inner, x, θ, v, Jtv)
     sjacobian!(nothing, (Jtv, v), cons, x, θ, one(eltype(Jtv)))
+end
+
+function jpprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Jpv::AbstractVector)
+    fill!(Jpv, zero(eltype(Jpv)))
+    _jpprod!(m.cons, x, m.θ, v, Jpv)
+    return Jpv
+end
+
+_jpprod!(cons::ConstraintNull, x, θ, v, Jpv) = nothing
+function _jpprod!(cons, x, θ, v, Jpv)
+    _jpprod!(cons.inner, x, θ, v, Jpv)
+    if cons.f.po1step > 0
+        sjacobianp!((Jpv, v), nothing, cons, x, θ, one(eltype(Jpv)))
+    end
+end
+
+function jptprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Jptv::AbstractVector)
+    fill!(Jptv, zero(eltype(Jptv)))
+    _jptprod!(m.cons, x, m.θ, v, Jptv)
+    return Jptv
+end
+
+_jptprod!(cons::ConstraintNull, x, θ, v, Jptv) = nothing
+function _jptprod!(cons, x, θ, v, Jptv)
+    _jptprod!(cons.inner, x, θ, v, Jptv)
+    if cons.f.po1step > 0
+        sjacobianp!(nothing, (Jptv, v), cons, x, θ, one(eltype(Jptv)))
+    end
 end
 
 function hess_coord!(
@@ -801,6 +884,42 @@ _con_hess_coord!(cons::ConstraintNull, x, θ, y, hess, obj_weight) = nothing
 function _con_hess_coord!(cons, x, θ, y, hess, obj_weight)
     _con_hess_coord!(cons.inner, x, θ, y, hess, obj_weight)
     shessian!(hess, nothing, cons, x, θ, y, zero(eltype(hess)))
+end
+
+function mhess_coord!(
+    m::ExaModel,
+    x::AbstractVector,
+    hess::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    fill!(hess, zero(eltype(hess)))
+    _obj_mhess_coord!(m.objs, x, m.θ, hess, obj_weight)
+    return hess
+end
+
+function mhess_coord!(
+    m::ExaModel,
+    x::AbstractVector,
+    y::AbstractVector,
+    hess::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    fill!(hess, zero(eltype(hess)))
+    _obj_mhess_coord!(m.objs, x, m.θ, hess, obj_weight)
+    _con_mhess_coord!(m.cons, x, m.θ, y, hess, obj_weight)
+    return hess
+end
+
+_obj_mhess_coord!(objs::ObjectiveNull, x, θ, hess, obj_weight) = nothing
+function _obj_mhess_coord!(objs, x, θ, hess, obj_weight)
+    _obj_mhess_coord!(objs.inner, x, θ, hess, obj_weight)
+    smhessian!(hess, nothing, objs, x, θ, obj_weight)
+end
+
+_con_mhess_coord!(cons::ConstraintNull, x, θ, y, hess, obj_weight) = nothing
+function _con_mhess_coord!(cons, x, θ, y, hess, obj_weight)
+    _con_mhess_coord!(cons.inner, x, θ, y, hess, obj_weight)
+    smhessian!(hess, nothing, cons, x, θ, y)
 end
 
 function hprod!(
@@ -841,13 +960,67 @@ function _con_hprod!(cons, x, θ, y, v, Hv, obj_weight)
     shessian!((Hv, v), nothing, cons, x, θ, y, zero(eltype(Hv)))
 end
 
+function mhtprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x)))
+    fill!(Hmtv, zero(eltype(Hmtv)))
+    _obj_mhtprod!(m.objs, x, m.θ, v, Hmtv, obj_weight)
+    return Hmtv
+end
+
+function mhtprod!(m::ExaModel, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x)))
+    fill!(Hmtv, zero(eltype(Hmtv)))
+    _obj_mhtprod!(m.objs, x, m.θ, v, Hmtv, obj_weight)
+    _con_mhtprod!(m.cons, x, m.θ, y, v, Hmtv, obj_weight)
+    return Hmtv
+end
+
+function mhprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Hmv::AbstractVector; obj_weight = one(eltype(x)))
+    fill!(Hmv, zero(eltype(Hmv)))
+    _obj_mhprod!(m.objs, x, m.θ, v, Hmv, obj_weight)
+    return Hmv
+end
+
+function mhprod!(m::ExaModel, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmv::AbstractVector; obj_weight = one(eltype(x)))
+    fill!(Hmv, zero(eltype(Hmv)))
+    _obj_mhprod!(m.objs, x, m.θ, v, Hmv, obj_weight)
+    _con_mhprod!(m.cons, x, m.θ, y, v, Hmv, obj_weight)
+    return Hmv
+end
+
+_obj_mhtprod!(objs::ObjectiveNull, x, θ, v, Hmtv, obj_weight) = nothing
+function _obj_mhtprod!(objs, x, θ, v, Hmtv, obj_weight)
+    _obj_mhtprod!(objs.inner, x, θ, v, Hmtv, obj_weight)
+    smhessian!(nothing, (Hmtv, v), objs, x, θ, obj_weight)
+end
+
+_con_mhtprod!(cons::ConstraintNull, x, θ, y, v, Hmtv, obj_weight) = nothing
+function _con_mhtprod!(cons, x, θ, y, v, Hmtv, obj_weight)
+    _con_mhtprod!(cons.inner, x, θ, y, v, Hmtv, obj_weight)
+    smhessian!(nothing, (Hmtv, v), cons, x, θ, y)
+end
+
+_obj_mhprod!(objs::ObjectiveNull, x, θ, v, Hmv, obj_weight) = nothing
+function _obj_mhprod!(objs, x, θ, v, Hmv, obj_weight)
+    _obj_mhprod!(objs.inner, x, θ, v, Hmv, obj_weight)
+    smhessian!((Hmv, v), nothing, objs, x, θ, obj_weight)
+end
+
+_con_mhprod!(cons::ConstraintNull, x, θ, y, v, Hmv, obj_weight) = nothing
+function _con_mhprod!(cons, x, θ, y, v, Hmv, obj_weight)
+    _con_mhprod!(cons.inner, x, θ, y, v, Hmv, obj_weight)
+    smhessian!((Hmv, v), nothing, cons, x, θ, y)
+end
+
 @inbounds @inline offset0(a, i) = offset0(a.f, i)
 @inbounds @inline offset1(a, i) = offset1(a.f, i)
 @inbounds @inline offset2(a, i) = offset2(a.f, i)
+@inbounds @inline poffset1(a, i) = poffset1(a.f, i)
+@inbounds @inline moffset2(a, i) = moffset2(a.f, i)
 @inbounds @inline offset0(f, itr, i) = offset0(f, i)
 @inbounds @inline offset0(f::F, i) where {F<:SIMDFunction} = f.o0 + i
 @inbounds @inline offset1(f::F, i) where {F<:SIMDFunction} = f.o1 + f.o1step * (i - 1)
 @inbounds @inline offset2(f::F, i) where {F<:SIMDFunction} = f.o2 + f.o2step * (i - 1)
+@inbounds @inline poffset1(f::F, i) where {F<:SIMDFunction} = f.po1 + f.po1step * (i - 1)
+@inbounds @inline moffset2(f::F, i) where {F<:SIMDFunction} = f.mo2 + f.mo2step * (i - 1)
 @inbounds @inline offset0(a::C, i) where {C<:ConstraintAug} = offset0(a.f, a.itr, i)
 @inbounds @inline offset0(f::F, itr, i) where {P<:Pair,F<:SIMDFunction{P}} =
     f.o0 + f.f.first(itr[i], nothing, nothing)

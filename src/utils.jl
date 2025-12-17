@@ -31,6 +31,9 @@ struct WrapperNLPModel{
     hess_buffer::VT2
     hess_I_buffer::VI
     hess_J_buffer::VI
+    
+    p_buffer::VT2  # Buffer for parameter derivatives
+    p_result::VT   # Result buffer for parameter derivatives
 
     meta::NLPModels.AbstractNLPModelMeta{T,VT}
     counters::NLPModels.Counters
@@ -85,6 +88,11 @@ function WrapperNLPModel(VT, m)
     hess_buffer = similar(m.meta.x0, nnzh)
     hess_I_buffer = similar(m.meta.x0, Int, nnzh)
     hess_J_buffer = similar(m.meta.x0, Int, nnzh)
+    
+    # Buffers for parameter derivatives
+    npar = length(m.θ)
+    p_buffer = similar(m.meta.x0, npar)
+    p_result = VT(undef, npar)
 
     return WrapperNLPModel(
         m,
@@ -102,6 +110,8 @@ function WrapperNLPModel(VT, m)
         hess_buffer,
         hess_I_buffer,
         hess_J_buffer,
+        p_buffer,
+        p_result,
         NLPModels.NLPModelMeta(
             nvar,
             x0 = x0,
@@ -247,6 +257,130 @@ function NLPModels.hprod!(
 
     buffered_copyto!(Hv, m.x_result, m.v_buffer)
     return Hv
+end
+
+function jpprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    v::AbstractVector,
+    Jpv::AbstractVector,
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.p_buffer, m.p_result, v)
+
+    jpprod!(m.inner, m.x_buffer, m.p_buffer, m.cons_buffer)
+
+    buffered_copyto!(Jpv, m.y_result, m.cons_buffer)
+    return Jpv
+end
+
+function jptprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    v::AbstractVector,
+    Jptv::AbstractVector,
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.cons_buffer, m.y_result, v)
+
+    jptprod!(m.inner, m.x_buffer, m.cons_buffer, m.p_buffer)
+
+    buffered_copyto!(Jptv, m.p_result, m.p_buffer)
+    return Jptv
+end
+
+function mhtprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    v::AbstractVector,
+    Hmtv::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.grad_buffer, m.x_result2, v)
+
+    mhtprod!(
+        m.inner,
+        m.x_buffer,
+        m.grad_buffer,
+        m.p_buffer;
+        obj_weight = obj_weight,
+    )
+
+    buffered_copyto!(Hmtv, m.p_result, m.p_buffer)
+    return Hmtv
+end
+
+function mhtprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    y::AbstractVector,
+    v::AbstractVector,
+    Hmtv::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.y_buffer, m.y_result, y)
+    buffered_copyto!(m.grad_buffer, m.x_result2, v)
+
+    mhtprod!(
+        m.inner,
+        m.x_buffer,
+        m.y_buffer,
+        m.grad_buffer,
+        m.p_buffer;
+        obj_weight = obj_weight,
+    )
+
+    buffered_copyto!(Hmtv, m.p_result, m.p_buffer)
+    return Hmtv
+end
+
+function mhprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    v::AbstractVector,
+    Hmv::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.p_buffer, m.p_result, v)
+
+    mhprod!(
+        m.inner,
+        m.x_buffer,
+        m.p_buffer,
+        m.grad_buffer;
+        obj_weight = obj_weight,
+    )
+
+    buffered_copyto!(Hmv, m.x_result, m.grad_buffer)
+    return Hmv
+end
+
+function mhprod!(
+    m::WrapperNLPModel,
+    x::AbstractVector,
+    y::AbstractVector,
+    v::AbstractVector,
+    Hmv::AbstractVector;
+    obj_weight = one(eltype(x)),
+)
+    buffered_copyto!(m.x_buffer, m.x_result, x)
+    buffered_copyto!(m.y_buffer, m.y_result, y)
+    buffered_copyto!(m.p_buffer, m.p_result, v)
+
+    mhprod!(
+        m.inner,
+        m.x_buffer,
+        m.y_buffer,
+        m.p_buffer,
+        m.grad_buffer;
+        obj_weight = obj_weight,
+    )
+
+    buffered_copyto!(Hmv, m.x_result, m.grad_buffer)
+    return Hmv
 end
 
 # TimedNLPModels

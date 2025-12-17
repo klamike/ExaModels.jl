@@ -34,6 +34,7 @@ include("simdfunction.jl")
 include("gradient.jl")
 include("jacobian.jl")
 include("hessian.jl")
+include("mixedhessian.jl")
 include("nlp.jl")
 include("utils.jl")
 
