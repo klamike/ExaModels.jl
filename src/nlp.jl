@@ -206,8 +206,11 @@ Base.@kwdef mutable struct ExaCore{T,VT<:AbstractVector{T},B}
     nobj::Int = 0
     nnzc::Int = 0
     nnzg::Int = 0
+    nnzgp::Int = 0
     nnzj::Int = 0
+    nnzjp::Int = 0
     nnzh::Int = 0
+    nnzmh::Int = 0
     x0::VT = convert_array(zeros(0), backend)
     θ::VT = similar(x0, 0)
     lvar::VT = similar(x0)
@@ -261,6 +264,7 @@ struct ExaModel{T,VT,E,O,C} <: NLPModels.AbstractNLPModel{T,VT}
     meta::NLPModels.NLPModelMeta{T,VT}
     counters::NLPModels.Counters
     ext::E
+    pmeta::ParametricNLPModels.ParametricNLPModelMeta
 end
 
 function Base.show(io::IO, c::ExaModel{T,VT}) where {T,VT}
@@ -329,6 +333,7 @@ function ExaModel(c::C; prod = nothing) where {C<:ExaCore}
         ),
         NLPModels.Counters(),
         nothing,
+        _parametric_meta(c),
     )
 end
 
@@ -634,7 +639,7 @@ Objective
 """
 function objective(c::C, gen) where {C<:ExaCore}
     gen = _adapt_gen(gen)
-    f = SIMDFunction(gen, c.nobj, c.nnzg, c.nnzh)
+    f = SIMDFunction(gen, c.nobj, c.nnzg, c.nnzh, c.nnzgp, c.nnzmh)
     pars = gen.iter
 
     _objective(c, f, pars)
@@ -646,7 +651,7 @@ end
 Adds objective terms specified by a `expr` and `pars` to `core`, and returns an `Objective` object.
 """
 function objective(c::C, expr::N, pars = 1:1) where {C<:ExaCore,N<:AbstractNode}
-    f = _simdfunction(expr, c.nobj, c.nnzg, c.nnzh)
+    f = _simdfunction(expr, c.nobj, c.nnzg, c.nnzh, c.nnzgp, c.nnzmh)
 
     _objective(c, f, pars)
 end
@@ -655,7 +660,9 @@ function _objective(c, f, pars)
     nitr = length(pars)
     c.nobj += nitr
     c.nnzg += nitr * f.o1step
+    c.nnzgp += nitr * f.po1step
     c.nnzh += nitr * f.o2step
+    c.nnzmh += nitr * f.mo2step
 
     c.obj = Objective(c.obj, f, convert_array(pars, c.backend))
 end
@@ -696,7 +703,7 @@ function constraint(
 ) where {T,C<:ExaCore{T}}
 
     gen = _adapt_gen(gen)
-    f = SIMDFunction(gen, c.ncon, c.nnzj, c.nnzh)
+    f = SIMDFunction(gen, c.ncon, c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
     pars = gen.iter
 
     _constraint(c, f, pars, start, lcon, ucon)
@@ -716,7 +723,7 @@ function constraint(
     ucon = zero(T),
 ) where {T,C<:ExaCore{T},N<:AbstractNode}
 
-    f = _simdfunction(expr, c.ncon, c.nnzj, c.nnzh)
+    f = _simdfunction(expr, c.ncon, c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
 
     _constraint(c, f, pars, start, lcon, ucon)
 end
@@ -734,7 +741,7 @@ function constraint(
     ucon = zero(T),
 ) where {T,C<:ExaCore{T}}
 
-    f = _simdfunction(Null(), c.ncon, c.nnzj, c.nnzh)
+    f = _simdfunction(Null(), c.ncon, c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
 
     _constraint(c, f, 1:n, start, lcon, ucon)
 end
@@ -745,7 +752,9 @@ function _constraint(c, f, pars, start, lcon, ucon)
     o = c.ncon
     c.ncon += nitr
     c.nnzj += nitr * f.o1step
+    c.nnzjp += nitr * f.po1step
     c.nnzh += nitr * f.o2step
+    c.nnzmh += nitr * f.mo2step
 
     c.y0 = append!(c.backend, c.y0, start, nitr)
     c.lcon = append!(c.backend, c.lcon, lcon, nitr)
@@ -786,7 +795,7 @@ Constraint Augmentation
 function constraint!(c::C, c1, gen::Base.Generator) where {C<:ExaCore}
 
     gen = _adapt_gen(gen)
-    f = SIMDFunction(gen, offset0(c1, 0), c.nnzj, c.nnzh)
+    f = SIMDFunction(gen, offset0(c1, 0), c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
     pars = gen.iter
 
     _constraint!(c, f, pars)
@@ -798,7 +807,7 @@ end
 Expands the existing constraint `c1` in `c` by adding addtional constraints terms specified by `expr` and `pars`.
 """
 function constraint!(c::C, c1, expr, pars) where {C<:ExaCore}
-    f = _simdfunction(expr, offset0(c1, 0), c.nnzj, c.nnzh)
+    f = _simdfunction(expr, offset0(c1, 0), c.nnzj, c.nnzh, c.nnzjp, c.nnzmh)
 
     _constraint!(c, f, pars)
 end
@@ -810,7 +819,9 @@ function _constraint!(c, f, pars)
 
     c.nconaug += nitr
     c.nnzj += nitr * f.o1step
+    c.nnzjp += nitr * f.po1step
     c.nnzh += nitr * f.o2step
+    c.nnzmh += nitr * f.mo2step
 
     c.con = ConstraintAug(c.con, f, convert_array(pars, c.backend), oa)
 end
@@ -1151,10 +1162,14 @@ end
 @inbounds @inline offset0(a, i) = offset0(a.f, i)
 @inbounds @inline offset1(a, i) = offset1(a.f, i)
 @inbounds @inline offset2(a, i) = offset2(a.f, i)
+@inbounds @inline poffset1(a, i) = poffset1(a.f, i)
+@inbounds @inline moffset2(a, i) = moffset2(a.f, i)
 @inbounds @inline offset0(f, itr, i) = offset0(f, i)
 @inbounds @inline offset0(f::F, i) where {F<:SIMDFunction} = f.o0 + i
 @inbounds @inline offset1(f::F, i) where {F<:SIMDFunction} = f.o1 + f.o1step * (i - 1)
 @inbounds @inline offset2(f::F, i) where {F<:SIMDFunction} = f.o2 + f.o2step * (i - 1)
+@inbounds @inline poffset1(f::F, i) where {F<:SIMDFunction} = f.po1 + f.po1step * (i - 1)
+@inbounds @inline moffset2(f::F, i) where {F<:SIMDFunction} = f.mo2 + f.mo2step * (i - 1)
 @inbounds @inline offset0(a::C, i) where {C<:ConstraintAug} = offset0(a.f, a.itr, i)
 @inbounds @inline offset0(f::F, itr, i) where {P<:Pair,F<:SIMDFunction{P}} =
     f.o0 + f.f.first(itr[i], nothing, nothing)
