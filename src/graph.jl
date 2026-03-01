@@ -143,6 +143,10 @@ struct Identity end
 @inline (v::ParameterNode{I})(::Any, x, θ) where {I} = @inbounds θ[v.i]
 @inline (v::ParameterNode{I})(::Identity, x, θ) where {I<:AbstractNode} = @inbounds θ[v.i]
 
+@inline (v::Var{I})(i, ::Nothing, θ) where {I<:AbstractNode} = NaN
+@inline (v::Var{I})(::Any, ::Nothing, θ) where {I} = NaN
+@inline (v::Var{I})(::Identity, ::Nothing, θ) where {I<:AbstractNode} = NaN
+
 @inline (v::ParameterNode{I})(i, x, ::Nothing) where {I<:AbstractNode} = NaN
 @inline (v::ParameterNode{I})(::Any, x, ::Nothing) where {I} = NaN
 @inline (v::ParameterNode{I})(::Identity, x, ::Nothing) where {I<:AbstractNode} = NaN
@@ -201,6 +205,13 @@ struct AdjointNodeVar{I,T} <: AbstractAdjointNode
     x::T
 end
 
+struct AdjointParameterNode{I,T} <: AbstractAdjointNode
+    i::I
+    x::T
+end
+
+const AdjointNode = Union{AdjointNodeVar,AdjointParameterNode}
+
 """
     AdjointNodeSource{VT}
 
@@ -210,6 +221,10 @@ A source of `AdjointNode`. `adjoint_node_source[i]` returns an `AdjointNodeVar` 
 - `inner::VT`: variable vector
 """
 struct AdjointNodeSource{VT}
+    inner::VT
+end
+
+struct AdjointParameterSource{VT}
     inner::VT
 end
 
@@ -223,6 +238,10 @@ end
 @inline Base.getindex(x::I, i) where {I<:AdjointNodeSource} =
     @inbounds AdjointNodeVar(i, x.inner[i])
 
+@inline Base.getindex(x::I, i) where {I<:AdjointParameterSource{Nothing}} =
+    AdjointParameterNode(i, NaN)
+@inline Base.getindex(x::I, i) where {I<:AdjointParameterSource} =
+    @inbounds AdjointParameterNode(i, x.inner[i])
 
 """
     SecondAdjointNode1{F, T, I}
@@ -281,6 +300,11 @@ struct SecondAdjointNodeVar{I,T} <: AbstractSecondAdjointNode
     x::T
 end
 
+struct SecondAdjointParameterNode{I,T} <: AbstractSecondAdjointNode
+    i::I
+    x::T
+end
+
 """
     SecondAdjointNodeSource{VT}
 
@@ -290,6 +314,10 @@ A source of `AdjointNode`. `adjoint_node_source[i]` returns an `AdjointNodeVar` 
 - `inner::VT`: variable vector
 """
 struct SecondAdjointNodeSource{VT}
+    inner::VT
+end
+
+struct SecondAdjointParameterSource{VT}
     inner::VT
 end
 
@@ -313,6 +341,11 @@ end
 @inline Base.getindex(x::I, i) where {I<:SecondAdjointNodeSource} =
     @inbounds SecondAdjointNodeVar(i, x.inner[i])
 
+@inline Base.getindex(::SecondAdjointParameterSource{Nothing}, i) =
+    SecondAdjointParameterNode(i, NaN)
+@inline Base.getindex(x::SecondAdjointParameterSource, i) =
+    @inbounds SecondAdjointParameterNode(i, x.inner[i])
+
 
 @inline (v::Null{Nothing})(i, x::V, θ) where {T,V<:AbstractVector{T}} = zero(T)
 @inline (v::Null{N})(i, x::V, θ) where {N,T,V<:AbstractVector{T}} = T(v.value)
@@ -320,3 +353,8 @@ end
 @inline (v::Null{N})(i, x::AdjointNodeSource{T}, θ) where {N, T} = AdjointNull(v.value)
 @inline (v::Null{Nothing})(i, x::SecondAdjointNodeSource{T}, θ) where {T} = SecondAdjointNull(0.0)
 @inline (v::Null{N})(i, x::SecondAdjointNodeSource{T}, θ) where {N, T} = SecondAdjointNull(v.value)
+
+@inline (v::Null{Nothing})(i, ::Nothing, θ::AdjointParameterSource) = AdjointNull(0.0)
+@inline (v::Null{N})(i, ::Nothing, θ::AdjointParameterSource) where N = AdjointNull(v.value)
+@inline (v::Null{Nothing})(i, ::Nothing, θ::SecondAdjointParameterSource) = SecondAdjointNull(0.0)
+@inline (v::Null{N})(i, ::Nothing, θ::SecondAdjointParameterSource) where N = SecondAdjointNull(v.value)

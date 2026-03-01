@@ -8,7 +8,7 @@ Performs dense gradient evaluation via the reverse pass on the computation (sub)
 - `y`: result vector
 - `adj`: adjoint propagated up to the current node
 """
-@inline function drpass(d::D, y, adj) where {D<:AdjointNull}
+@inline function drpass(d::D, y, adj) where {D<:Union{AdjointNull,ParIndexed,Real}}
     nothing
 end
 @inline function drpass(d::D, y, adj) where {D<:AdjointNode1}
@@ -20,7 +20,7 @@ end
     offset = drpass(d.inner2, y, adj * d.y2)
     nothing
 end
-@inline function drpass(d::D, y, adj) where {D<:AdjointNodeVar}
+@inline function drpass(d::D, y, adj) where {D<:AdjointNode}
     @inbounds y[d.i] += adj
     nothing
 end
@@ -44,6 +44,18 @@ function gradient!(y, f, x, θ, adj)
 end
 function gradient!(y, f, x, θ, p, adj)
     graph = f(p, AdjointNodeSource(x), θ)
+    drpass(graph, y, adj)
+    return y
+end
+
+function grad_param!(y, f, x, θ, adj)
+    @simd for k in eachindex(f.itr)
+        @inbounds grad_param!(y, f.f, x, θ, f.itr[k], adj)
+    end
+    return y
+end
+function grad_param!(y, f, x, θ, p, adj)
+    graph = f(p, x, AdjointParameterSource(θ))
     drpass(graph, y, adj)
     return y
 end
@@ -80,11 +92,11 @@ end
     cnt = grpass(d.inner2, comp, y, o1, cnt, adj * d.y2)
     return cnt
 end
-@inline function grpass(d::D, comp, y, o1, cnt, adj) where {D<:AdjointNodeVar}
+@inline function grpass(d::D, comp, y, o1, cnt, adj) where {D<:AdjointNode}
     @inbounds y[o1+comp(cnt+=1)] += adj
     return cnt
 end
-@inline function grpass(d::AdjointNodeVar, comp::Nothing, y, o1, cnt, adj) # despecialization
+@inline function grpass(d::AdjointNode, comp::Nothing, y, o1, cnt, adj) # despecialization
     push!(y, d.i)
     return (cnt += 1)
 end
@@ -95,7 +107,7 @@ end
     o1,
     cnt,
     adj,
-) where {D<:AdjointNodeVar,V<:AbstractVector{Tuple{Int,Int}}}
+) where {D<:AdjointNode,V<:AbstractVector{Tuple{Int,Int}}}
     ind = o1 + comp(cnt += 1)
     @inbounds y[ind] = (d.i, ind)
     return cnt
@@ -113,7 +125,7 @@ Performs sparse gradient evalution
 """
 function sgradient!(y, f, x, θ, adj)
     @simd for k in eachindex(f.itr)
-        @inbounds sgradient!(y, f.f, f.itr[k], x, θ, f.itr.comp1, offset1(f, k), adj)
+        @inbounds sgradient!(y, f.f, f.itr[k], x, θ, f.f.comp1, offset1(f, k), adj)
     end
     return y
 end
@@ -121,5 +133,29 @@ end
 function sgradient!(y, f, p, x, θ, comp, o1, adj)
     graph = f(p, AdjointNodeSource(x), θ)
     grpass(graph, comp, y, o1, 0, adj)
+    return y
+end
+
+""" sgradientp!(y, f, x, θ, adj)
+
+Performs sparse gradient evaluation w.r.t. parameters
+
+# Arguments:
+- `y`: result vector
+- `f`: the function to be differentiated in `SIMDFunction` format
+- `x`: variable vector
+- `θ`: parameter vector
+- `adj`: initial adjoint
+"""
+function sgradientp!(y, f, x, θ, adj)
+    @simd for k in eachindex(f.itr)
+        @inbounds sgradientp!(y, f.f, f.itr[k], x, θ, f.f.pcomp1, poffset1(f, k), adj)
+    end
+    return y
+end
+
+function sgradientp!(y, f, p, x, θ, comp, po1, adj)
+    graph = f(p, x, AdjointParameterSource(θ))
+    grpass(graph, comp, y, po1, 0, adj)
     return y
 end
