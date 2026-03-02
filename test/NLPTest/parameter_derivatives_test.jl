@@ -34,25 +34,25 @@ function _basis_matrix(apply!, nout::Int, nin::Int)
 end
 
 function _jac_param_from_coord(m::ExaModel, nlp::WrapperNLPModel, x::AbstractVector)
-    rows = zeros(Int, m.pmeta.nnzjp)
-    cols = zeros(Int, m.pmeta.nnzjp)
-    vals = zeros(m.pmeta.nnzjp)
+    rows = zeros(Int, m.meta.nnzjp)
+    cols = zeros(Int, m.meta.nnzjp)
+    vals = zeros(m.meta.nnzjp)
     ExaModels.jac_param_structure!(nlp, rows, cols)
     ExaModels.jac_param_coord!(nlp, x, vals)
-    return sparse(rows, cols, vals, m.meta.ncon, m.pmeta.nparam)
+    return sparse(rows, cols, vals, m.meta.ncon, m.meta.nparam)
 end
 
 function _hess_param_from_coord(m::ExaModel, x::AbstractVector; y::Union{Nothing,AbstractVector} = nothing, obj_weight::Float64 = 1.0)
-    rows = zeros(Int, m.pmeta.nnzhp)
-    cols = zeros(Int, m.pmeta.nnzhp)
-    vals = zeros(m.pmeta.nnzhp)
+    rows = zeros(Int, m.meta.nnzhp)
+    cols = zeros(Int, m.meta.nnzhp)
+    vals = zeros(m.meta.nnzhp)
     ExaModels.hess_param_structure!(m, rows, cols)
     if isnothing(y)
         ExaModels.hess_param_coord!(m, x, vals; obj_weight=obj_weight)
     else
         ExaModels.hess_param_coord!(m, x, y, vals; obj_weight=obj_weight)
     end
-    return sparse(rows, cols, vals, m.meta.nvar, m.pmeta.nparam)
+    return sparse(rows, cols, vals, m.meta.nvar, m.meta.nparam)
 end
 
 function _lagrangian_grad_x!(nlp::WrapperNLPModel,
@@ -198,10 +198,10 @@ function test_parameter_derivatives(backend)
         m, nlp = _model_and_nlp(c; prod=true)
         x_test = [1.0, 2.0]
 
-        Jp = _basis_matrix(m.meta.ncon, m.pmeta.nparam) do out, v
+        Jp = _basis_matrix(m.meta.ncon, m.meta.nparam) do out, v
             ExaModels.jpprod!(nlp, x_test, v, out)
         end
-        JpT = _basis_matrix(m.pmeta.nparam, m.meta.ncon) do out, v
+        JpT = _basis_matrix(m.meta.nparam, m.meta.ncon) do out, v
             ExaModels.jptprod!(nlp, x_test, v, out)
         end
 
@@ -211,7 +211,7 @@ function test_parameter_derivatives(backend)
 
         for θv in ([1.0, 2.0], [3.0, 4.0], [0.5, 1.5])
             set_parameter!(c, θ, θv)
-            JpTθ = _basis_matrix(m.pmeta.nparam, m.meta.ncon) do out, v
+            JpTθ = _basis_matrix(m.meta.nparam, m.meta.ncon) do out, v
                 ExaModels.jptprod!(nlp, x_test, v, out)
             end
             @test JpTθ ≈ [x_test[1] x_test[1]^2; x_test[2] x_test[2]^2] atol=1e-12
@@ -224,7 +224,7 @@ function test_parameter_derivatives(backend)
         constraint(csp, θsp[2] * xsp[2] + θsp[3] * xsp[3])
         constraint(csp, θsp[1] * xsp[1] + θsp[3] * xsp[3])
         msp, nlpsp = _model_and_nlp(csp; prod=true)
-        JspT = _basis_matrix(msp.pmeta.nparam, msp.meta.ncon) do out, v
+        JspT = _basis_matrix(msp.meta.nparam, msp.meta.ncon) do out, v
             ExaModels.jptprod!(nlpsp, [1.0, 2.0, 3.0], v, out)
         end
         @test (abs.(JspT) .> 1e-12) == [1 0 1; 1 1 0; 0 1 1]
@@ -238,10 +238,10 @@ function test_parameter_derivatives(backend)
         mcoord, nlpcoord = _model_and_nlp(ccoord; prod=true)
         x_coord = [1.0, 2.0, 3.0, 4.0]
 
-        J_prod = _basis_matrix(mcoord.meta.ncon, mcoord.pmeta.nparam) do out, v
+        J_prod = _basis_matrix(mcoord.meta.ncon, mcoord.meta.nparam) do out, v
             ExaModels.jpprod!(nlpcoord, x_coord, v, out)
         end
-        J_tprod = _basis_matrix(mcoord.pmeta.nparam, mcoord.meta.ncon) do out, v
+        J_tprod = _basis_matrix(mcoord.meta.nparam, mcoord.meta.ncon) do out, v
             ExaModels.jptprod!(nlpcoord, x_coord, v, out)
         end
         J_coord = Matrix(_jac_param_from_coord(mcoord, nlpcoord, x_coord))
@@ -261,14 +261,14 @@ function test_parameter_derivatives(backend)
         objective(cs, θs[1] * xs[1]^2 + θs[2] * xs[2]^2 + θs[3] * xs[3]^2)
         ms, nlps = _model_and_nlp(cs; prod=true)
 
-        Hs = _basis_matrix(ms.meta.nvar, ms.pmeta.nparam) do out, v
+        Hs = _basis_matrix(ms.meta.nvar, ms.meta.nparam) do out, v
             ExaModels.hpprod!(nlps, [1.0, 2.0, 3.0], zeros(0), v, out; obj_weight=1.0)
         end
         @test (abs.(Hs) .> 1e-12) == [1 0 0; 0 1 0; 0 0 1]
 
         for θv in ([1.0, 2.0, 3.0], [3.0, 4.0, 5.0], [0.5, 1.5, 2.5])
             set_parameter!(cs, θs, θv)
-            Hθ = _basis_matrix(ms.meta.nvar, ms.pmeta.nparam) do out, v
+            Hθ = _basis_matrix(ms.meta.nvar, ms.meta.nparam) do out, v
                 ExaModels.hpprod!(nlps, [1.0, 2.0, 3.0], zeros(0), v, out; obj_weight=1.0)
             end
             @test Hθ ≈ [2.0 0.0 0.0; 0.0 4.0 0.0; 0.0 0.0 6.0] atol=1e-12
@@ -371,10 +371,10 @@ function test_parameter_derivatives(backend)
 
         x_m = [1.0, 2.0, 3.0]
         y_m = [0.5]
-        H_prod = _basis_matrix(mcoord.meta.nvar, mcoord.pmeta.nparam) do out, v
+        H_prod = _basis_matrix(mcoord.meta.nvar, mcoord.meta.nparam) do out, v
             ExaModels.hpprod!(nlpcoord, x_m, y_m, v, out; obj_weight=1.0)
         end
-        H_tprod = _basis_matrix(mcoord.pmeta.nparam, mcoord.meta.nvar) do out, v
+        H_tprod = _basis_matrix(mcoord.meta.nparam, mcoord.meta.nvar) do out, v
             ExaModels.hptprod!(nlpcoord, x_m, y_m, v, out; obj_weight=1.0)
         end
         H_coord = Matrix(_hess_param_from_coord(mcoord, x_m; y=y_m, obj_weight=1.0))
@@ -396,17 +396,17 @@ function test_parameter_derivatives(backend)
         x_s = ones(5)
         y_s = [0.1, 0.2, 0.3, 0.4]
 
-        J_sparse = _basis_matrix(msparse.meta.ncon, msparse.pmeta.nparam) do out, v
+        J_sparse = _basis_matrix(msparse.meta.ncon, msparse.meta.nparam) do out, v
             ExaModels.jpprod!(nlpsparse, x_s, v, out)
         end
         @test nnz(sparse(J_sparse)) == 8
 
-        H_sparse = _basis_matrix(msparse.meta.nvar, msparse.pmeta.nparam) do out, v
+        H_sparse = _basis_matrix(msparse.meta.nvar, msparse.meta.nparam) do out, v
             ExaModels.hpprod!(nlpsparse, x_s, y_s, v, out; obj_weight=1.0)
         end
         @test nnz(sparse(H_sparse)) == 5
 
-        HT_sparse = _basis_matrix(msparse.pmeta.nparam, msparse.meta.nvar) do out, v
+        HT_sparse = _basis_matrix(msparse.meta.nparam, msparse.meta.nvar) do out, v
             ExaModels.hptprod!(nlpsparse, x_s, y_s, v, out; obj_weight=1.0)
         end
         @test H_sparse ≈ HT_sparse' atol=1e-12
