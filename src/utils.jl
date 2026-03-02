@@ -36,7 +36,6 @@ struct WrapperNLPModel{
     p_buffer::VT2
     p_result::VT
 
-    pmeta::NLPModels.ParametricNLPModelMeta
     meta::NLPModels.AbstractNLPModelMeta{T,VT}
     counters::NLPModels.Counters
 end
@@ -92,8 +91,7 @@ function WrapperNLPModel(VT, m)
     hess_I_buffer = similar(m.meta.x0, Int, nnzh)
     hess_J_buffer = similar(m.meta.x0, Int, nnzh)
 
-    inner_pmeta = hasproperty(m, :pmeta) ? getproperty(m, :pmeta) : NLPModels.ParametricNLPModelMeta()
-    npar = inner_pmeta.nparam
+    npar = m.meta.nparam
     p_buffer = similar(m.meta.x0, npar)
     p_result = VT(undef, npar)
 
@@ -116,7 +114,6 @@ function WrapperNLPModel(VT, m)
         hess_J_buffer,
         p_buffer,
         p_result,
-        inner_pmeta,
         NLPModels.NLPModelMeta(
             nvar,
             x0 = x0,
@@ -129,6 +126,14 @@ function WrapperNLPModel(VT, m)
             nnzj = nnzj,
             nnzh = nnzh,
             minimize = m.meta.minimize,
+            nparam = m.meta.nparam,
+            nnzjp = m.meta.nnzjp,
+            nnzhp = m.meta.nnzhp,
+            nnzgp = m.meta.nnzgp,
+            nnzjplcon = m.meta.nnzjplcon,
+            nnzjpucon = m.meta.nnzjpucon,
+            nnzjplvar = m.meta.nnzjplvar,
+            nnzjpuvar = m.meta.nnzjpuvar,
         ),
         NLPModels.Counters(),
     )
