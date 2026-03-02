@@ -47,7 +47,6 @@ include("hessian.jl")
 include("mixedhessian.jl")
 include("nlp.jl")
 include("tags.jl")
-include("pnlp.jl")
 include("utils.jl")
 
 export ExaModel,
