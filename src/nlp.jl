@@ -262,6 +262,7 @@ struct ExaModel{T,VT,E,O,C,S} <: AbstractExaModel{T,VT,E}
     cons::C
     θ::VT
     meta::NLPModels.NLPModelMeta{T,VT}
+    param_meta::ParametricNLPModelMeta
     counters::NLPModels.Counters
     ext::E
     tags::S
@@ -329,6 +330,8 @@ ExaModel(c::C; kwargs...) where {C<:ExaCore} = ExaModel(
         lcon = c.lcon,
         ucon = c.ucon,
         minimize = c.minimize,
+    ),
+    ParametricNLPModelMeta(
         nparam = length(c.θ),
         nnzjp = c.nnzjp,
         nnzhp = c.nnzmh,
@@ -1312,7 +1315,7 @@ end
 
 function hptprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x)))
     fill!(Hmtv, zero(eltype(Hmtv)))
-    if m.meta.nnzhp == 0
+    if get_nnzhp(m) == 0
         return Hmtv
     end
     _obj_hptprod!(m.objs, x, m.θ, v, Hmtv, obj_weight)
@@ -1321,7 +1324,7 @@ end
 
 function hptprod!(m::ExaModel, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x)))
     fill!(Hmtv, zero(eltype(Hmtv)))
-    if m.meta.nnzhp == 0
+    if get_nnzhp(m) == 0
         return Hmtv
     end
     _obj_hptprod!(m.objs, x, m.θ, v, Hmtv, obj_weight)
@@ -1331,7 +1334,7 @@ end
 
 function hpprod!(m::ExaModel, x::AbstractVector, v::AbstractVector, Hmv::AbstractVector; obj_weight = one(eltype(x)))
     fill!(Hmv, zero(eltype(Hmv)))
-    if m.meta.nnzhp == 0
+    if get_nnzhp(m) == 0
         return Hmv
     end
     _obj_hpprod!(m.objs, x, m.θ, v, Hmv, obj_weight)
@@ -1340,7 +1343,7 @@ end
 
 function hpprod!(m::ExaModel, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmv::AbstractVector; obj_weight = one(eltype(x)))
     fill!(Hmv, zero(eltype(Hmv)))
-    if m.meta.nnzhp == 0
+    if get_nnzhp(m) == 0
         return Hmv
     end
     _obj_hpprod!(m.objs, x, m.θ, v, Hmv, obj_weight)

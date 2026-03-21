@@ -5,6 +5,7 @@ version = "0.9.5"
 
 [deps]
 NLPModels = "a4795742-8479-5a88-8948-cc11e1c8c1a6"
+ParametricNLPModels = "1ff82034-6bb8-44a0-b51b-5c1bd563924f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 SolverCore = "ff4d7338-4cf1-434d-91df-b86cb86fb843"
 
@@ -46,10 +47,8 @@ MathOptInterface = "1.19"
 NLPModels = "0.21"
 NLPModelsIpopt = "0.11"
 OpenCL = "0.10"
+ParametricNLPModels = "0.1"
 SolverCore = "0.3"
 SpecialFunctions = "2"
 julia = "1.9"
 oneAPI = "2"
-
-[sources]
-NLPModels = {rev = "mk/param_api", url = "https://github.com/klamike/NLPModels.jl"}

@@ -21,7 +21,13 @@ import NLPModels:
     hess_structure!,
     cons_nln!,
     jtprod_nln!,
-    jprod_nln!,
+    jprod_nln!
+import ParametricNLPModels:
+    ParametricNLPModels,
+    ParametricNLPModelMeta,
+    get_nparam,
+    get_nnzjp,
+    get_nnzhp,
     grad_param!,
     jac_param_structure!,
     jac_param_coord!,
