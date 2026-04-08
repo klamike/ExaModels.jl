@@ -50,12 +50,12 @@ end
     o2,
     cnt,
     adj,
-) where {T1<:SecondAdjointNodeVar,T2<:SecondAdjointNode1}
+) where {T1<:SecondAdjointLeaf,T2<:SecondAdjointNode1}
     cnt = hdrpass(t1, t2.inner, comp, y1, y2, o2, cnt, adj * t2.y)
     cnt
 end
 function hdrpass(
-    t1::SecondAdjointNodeVar,
+    t1::SecondAdjointLeaf,
     t2::SecondAdjointNode1,
     comp::Nothing,
     y1,
@@ -78,13 +78,13 @@ end
     o2,
     cnt,
     adj,
-) where {T1<:SecondAdjointNode1,T2<:SecondAdjointNodeVar}
+) where {T1<:SecondAdjointNode1,T2<:SecondAdjointLeaf}
     cnt = hdrpass(t1.inner, t2, comp, y1, y2, o2, cnt, adj * t1.y)
     cnt
 end
 function hdrpass(
     t1::SecondAdjointNode1,
-    t2::SecondAdjointNodeVar,
+    t2::SecondAdjointLeaf,
     comp::Nothing,
     y1,
     y2,
@@ -198,13 +198,13 @@ end
     o2,
     cnt,
     adj,
-) where {T1<:SecondAdjointNodeVar,T2<:SecondAdjointNode2}
+) where {T1<:SecondAdjointLeaf,T2<:SecondAdjointNode2}
     cnt = hdrpass(t1, t2.inner1, comp, y1, y2, o2, cnt, adj * t2.y1)
     cnt = hdrpass(t1, t2.inner2, comp, y1, y2, o2, cnt, adj * t2.y2)
     cnt
 end
 function hdrpass(
-    t1::SecondAdjointNodeVar,
+    t1::SecondAdjointLeaf,
     t2::SecondAdjointNode2,
     comp::Nothing,
     y1,
@@ -227,14 +227,14 @@ end
     o2,
     cnt,
     adj,
-) where {T1<:SecondAdjointNode2,T2<:SecondAdjointNodeVar}
+) where {T1<:SecondAdjointNode2,T2<:SecondAdjointLeaf}
     cnt = hdrpass(t1.inner1, t2, comp, y1, y2, o2, cnt, adj * t1.y1)
     cnt = hdrpass(t1.inner2, t2, comp, y1, y2, o2, cnt, adj * t1.y2)
     cnt
 end
 function hdrpass(
     t1::SecondAdjointNode2,
-    t2::SecondAdjointNodeVar,
+    t2::SecondAdjointLeaf,
     comp::Nothing,
     y1,
     y2,
@@ -293,6 +293,91 @@ end
     end
     return (cnt += 1)
 end
+
+@inline function hdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp,
+    y1,
+    y2,
+    o2,
+    cnt,
+    adj,
+)
+    @inbounds y1[o2+comp(cnt+=1)] += adj
+    cnt
+end
+
+@inline function hdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp,
+    y1,
+    y2,
+    o2,
+    cnt,
+    adj,
+)
+    hdrpass(t2, t1, comp, y1, y2, o2, cnt, adj)
+end
+
+@inline function hdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp,
+    y1::Tuple{V1,V2},
+    y2,
+    o2,
+    cnt,
+    adj,
+) where {V1<:AbstractVector,V2<:AbstractVector}
+    y, v = y1
+    @inbounds y[t1.i] += adj * v[t2.i]
+    return (cnt += 1)
+end
+
+@inline function hdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp,
+    y1::Tuple{V1,V2},
+    y2,
+    o2,
+    cnt,
+    adj,
+) where {V1<:AbstractVector,V2<:AbstractVector}
+    hdrpass(t2, t1, comp, y1, y2, o2, cnt, adj)
+end
+
+@inline function hdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp,
+    y1,
+    y2::Tuple{V1,V2},
+    o2,
+    cnt,
+    adj,
+) where {V1<:AbstractVector,V2<:AbstractVector}
+    y, v = y2
+    @inbounds y[t2.i] += adj * v[t1.i]
+    return (cnt += 1)
+end
+
+@inline function hdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp,
+    y1,
+    y2::Tuple{V1,V2},
+    o2,
+    cnt,
+    adj,
+) where {V1<:AbstractVector,V2<:AbstractVector}
+    hdrpass(t2, t1, comp, y1, y2, o2, cnt, adj)
+end
+
+@inline hdrpass(::SecondAdjointParameterNode, ::SecondAdjointParameterNode, comp, y1, y2, o2, cnt, adj) = cnt
 
 # SecondAdjointNull: constant branch contributes zero cross-derivatives
 @inline hdrpass(::Any, ::SecondAdjointNull, comp, y1, y2, o2, cnt, adj) = cnt
@@ -480,7 +565,7 @@ end
     cnt,
     adj,
     adj2,
-) where {T<:SecondAdjointNodeVar}
+) where {T<:SecondAdjointLeaf}
     cnt
 end
 @inline function hrpass0(
@@ -492,7 +577,7 @@ end
     cnt,
     adj,
     adj2,
-) where {T<:SecondAdjointNodeVar}
+) where {T<:SecondAdjointLeaf}
     cnt
 end
 
@@ -511,11 +596,39 @@ function hdrpass(
     push!(y1, (t1.i, t2.i))
     cnt
 end
+function hdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp::Nothing,
+    y1,
+    y2,
+    o2,
+    cnt,
+    adj,
+)
+    cnt += 1
+    push!(y1, (t1.i, t2.i))
+    cnt
+end
+function hdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp::Nothing,
+    y1,
+    y2,
+    o2,
+    cnt,
+    adj,
+)
+    hdrpass(t2, t1, comp, y1, y2, o2, cnt, adj)
+end
 function hrpass(t::SecondAdjointNodeVar, comp::Nothing, y1, y2, o2, cnt, adj, adj2)
     cnt += 1
     push!(y1, (t.i, t.i))
     cnt
 end
+@inline hrpass(::SecondAdjointParameterNode, comp, y1, y2, o2, cnt, adj, adj2) = cnt
+@inline hrpass(::SecondAdjointParameterNode, ::Nothing, y1, y2, o2, cnt, adj, adj2) = cnt
 
 @inline function hrpass(
     t::T,
@@ -574,6 +687,33 @@ end
     cnt
 end
 @inline function hdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp,
+    y1::V,
+    y2::V,
+    o2,
+    cnt,
+    adj,
+) where {I<:Integer,V<:AbstractVector{I}}
+    ind = o2 + comp(cnt += 1)
+    @inbounds y1[ind] = t1.i
+    @inbounds y2[ind] = t2.i
+    cnt
+end
+@inline function hdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp,
+    y1::V,
+    y2::V,
+    o2,
+    cnt,
+    adj,
+) where {I<:Integer,V<:AbstractVector{I}}
+    hdrpass(t2, t1, comp, y1, y2, o2, cnt, adj)
+end
+@inline function hdrpass(
     t1::T1,
     t2::T2,
     comp,
@@ -617,6 +757,32 @@ end
         y1[ind] = ((j, i), ind)
     end
     cnt
+end
+@inline function hdrpass(
+    t1::SecondAdjointNodeVar,
+    t2::SecondAdjointParameterNode,
+    comp,
+    y1::V,
+    y2,
+    o2,
+    cnt,
+    adj,
+) where {I<:Tuple{Tuple{Int,Int},Int},V<:AbstractVector{I}}
+    ind = o2 + comp(cnt += 1)
+    @inbounds y1[ind] = ((t1.i, t2.i), ind)
+    cnt
+end
+@inline function hdrpass(
+    t1::SecondAdjointParameterNode,
+    t2::SecondAdjointNodeVar,
+    comp,
+    y1::V,
+    y2,
+    o2,
+    cnt,
+    adj,
+) where {I<:Tuple{Tuple{Int,Int},Int},V<:AbstractVector{I}}
+    hdrpass(t2, t1, comp, y1, y2, o2, cnt, adj)
 end
 
 """

@@ -23,6 +23,22 @@ import NLPModels:
     cons_nln!,
     jtprod_nln!,
     jprod_nln!
+import ParametricNLPModels:
+    ParametricNLPModels,
+    ParametricNLPModelMeta,
+    get_nparam,
+    get_nnzjp,
+    get_nnzhp,
+    grad_param!,
+    jac_param_structure!,
+    jac_param_coord!,
+    jpprod!,
+    jptprod!,
+    hess_param_structure!,
+    hess_param_coord!,
+    hpprod!,
+    hptprod!
+
 import SolverCore
 import Printf
 
@@ -35,6 +51,7 @@ include("simdfunction.jl")
 include("gradient.jl")
 include("jacobian.jl")
 include("hessian.jl")
+include("mixedhessian.jl")
 include("nlp.jl")
 include("tags.jl")
 include("utils.jl")

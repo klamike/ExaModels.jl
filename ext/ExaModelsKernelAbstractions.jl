@@ -23,6 +23,9 @@ struct KAExtension{T,VT<:AbstractVector{T},H,VI1,VI2,B}
     gradbuffer::VT
     gsparsity::VI1
     gptr::VI2
+    pgradbuffer::VT
+    pgsparsity::VI1
+    pgptr::VI2
     conbuffer::VT
     conaugsparsity::VI1
     conaugptr::VI2
@@ -43,6 +46,13 @@ function ExaModels.build_extension(
         ExaModels.sort!(gsparsity; lt = ((i, j), (k, l)) -> i < k)
     end
     gptr = ExaModels.getptr(c.backend, gsparsity; cmp = (x, y) -> x[1] != y[1])
+
+    pgsparsity = similar(c.x0, Tuple{Int,Int}, c.nnzgp)
+    _grad_param_structure!(c.backend, c.obj, pgsparsity)
+    if !isempty(pgsparsity)
+        ExaModels.sort!(pgsparsity; lt = ((i, j), (k, l)) -> i < k)
+    end
+    pgptr = ExaModels.getptr(c.backend, pgsparsity; cmp = (x, y) -> x[1] != y[1])
 
     conaugsparsity = similar(c.x0, Tuple{Int,Int}, c.nconaug)
     _conaug_structure!(T, c.backend, c.con, conaugsparsity)
@@ -89,6 +99,38 @@ function ExaModels.build_extension(
         hessptrj =
             ExaModels.getptr(c.backend, hesssparsityj; cmp = (x, y) -> x[1][2] != y[1][2])
 
+        jacpbuffer = similar(c.x0, c.nnzjp)
+        mhessbuffer = similar(c.x0, c.nnzmh)
+
+        jacpsparsityi = similar(c.x0, Tuple{Tuple{Int,Int},Int}, c.nnzjp)
+        _jac_param_structure!(c.backend, c.con, jacpsparsityi, nothing)
+        jacpsparsityj = copy(jacpsparsityi)
+
+        if !isempty(jacpsparsityi)
+            ExaModels.sort!(jacpsparsityi; lt = (((i, j), k), ((n, m), l)) -> i < n)
+        end
+        jacpptri = ExaModels.getptr(c.backend, jacpsparsityi; cmp = (x, y) -> x[1][1] != y[1][1])
+
+        if !isempty(jacpsparsityj)
+            ExaModels.sort!(jacpsparsityj; lt = (((i, j), k), ((n, m), l)) -> j < m)
+        end
+        jacpptrj = ExaModels.getptr(c.backend, jacpsparsityj; cmp = (x, y) -> x[1][2] != y[1][2])
+
+        mhesssparsityi = similar(c.x0, Tuple{Tuple{Int,Int},Int}, c.nnzmh)
+        _obj_mhess_structure!(c.backend, c.obj, mhesssparsityi, nothing)
+        _con_mhess_structure!(c.backend, c.con, mhesssparsityi, nothing)
+        mhesssparsityj = copy(mhesssparsityi)
+
+        if !isempty(mhesssparsityi)
+            ExaModels.sort!(mhesssparsityi; lt = (((i, j), k), ((n, m), l)) -> i < n)
+        end
+        mhessptri = ExaModels.getptr(c.backend, mhesssparsityi; cmp = (x, y) -> x[1][1] != y[1][1])
+
+        if !isempty(mhesssparsityj)
+            ExaModels.sort!(mhesssparsityj; lt = (((i, j), k), ((n, m), l)) -> j < m)
+        end
+        mhessptrj = ExaModels.getptr(c.backend, mhesssparsityj; cmp = (x, y) -> x[1][2] != y[1][2])
+
         prodhelper = (
             jacbuffer = jacbuffer,
             jacsparsityi = jacsparsityi,
@@ -100,6 +142,8 @@ function ExaModels.build_extension(
             hesssparsityj = hesssparsityj,
             hessptri = hessptri,
             hessptrj = hessptrj,
+            jacpbuffer = jacpbuffer, jacpsparsityi = jacpsparsityi, jacpsparsityj = jacpsparsityj, jacpptri = jacpptri, jacpptrj = jacpptrj,
+            mhessbuffer = mhessbuffer, mhesssparsityi = mhesssparsityi, mhesssparsityj = mhesssparsityj, mhessptri = mhessptri, mhessptrj = mhessptrj,
         )
     else
         prodhelper = nothing
@@ -111,6 +155,9 @@ function ExaModels.build_extension(
         similar(c.x0, c.nnzg),
         gsparsity,
         gptr,
+        similar(c.x0, c.nnzgp),
+        pgsparsity,
+        pgptr,
         similar(c.x0, c.nconaug),
         conaugsparsity,
         conaugptr,
@@ -418,6 +465,214 @@ function ExaModels.hprod!(
     return Hv
 end
 
+function ExaModels.hess_param_structure!(m::ExaModels.ExaModel{T,VT,E}, rows::V, cols::V) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    if !isempty(rows)
+        _obj_mhess_structure!(m.ext.backend, m.objs, rows, cols)
+        _con_mhess_structure!(m.ext.backend, m.cons, rows, cols)
+    end
+    return rows, cols
+end
+
+function _obj_mhess_structure!(backend, objs, rows, cols)
+    ExaModels.shessian_param!(backend, rows, cols, objs, nothing, nothing, NaN)
+    _obj_mhess_structure!(backend, objs.inner, rows, cols)
+end
+function _obj_mhess_structure!(backend, objs::ExaModels.ObjectiveNull, rows, cols) end
+
+function _obj_mhess_structure!(backend, objs, sparsity, ::Nothing)
+    ExaModels.shessian_param!(backend, sparsity, nothing, objs, nothing, nothing, NaN)
+    _obj_mhess_structure!(backend, objs.inner, sparsity, nothing)
+end
+function _obj_mhess_structure!(backend, objs::ExaModels.ObjectiveNull, sparsity, ::Nothing) end
+
+function _con_mhess_structure!(backend, cons, rows, cols)
+    ExaModels.shessian_param!(backend, rows, cols, cons, nothing, nothing, NaN)
+    _con_mhess_structure!(backend, cons.inner, rows, cols)
+end
+function _con_mhess_structure!(backend, cons::ExaModels.ConstraintNull, rows, cols) end
+
+function _con_mhess_structure!(backend, cons, sparsity, ::Nothing)
+    ExaModels.shessian_param!(backend, sparsity, nothing, cons, nothing, nothing, NaN)
+    _con_mhess_structure!(backend, cons.inner, sparsity, nothing)
+end
+function _con_mhess_structure!(backend, cons::ExaModels.ConstraintNull, sparsity, ::Nothing) end
+
+function ExaModels.hpprod!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, v::AbstractVector, Hmv::AbstractVector; obj_weight = one(eltype(x))) where {T,VT,N<:NamedTuple,E<:KAExtension{T,VT,N}}
+    fill!(Hmv, zero(eltype(Hmv)))
+    isempty(m.ext.prodhelper.mhessbuffer) && return Hmv
+    fill!(m.ext.prodhelper.mhessbuffer, zero(eltype(Hmv)))
+
+    _obj_hess_param_coord!(m.ext.backend, m.ext.prodhelper.mhessbuffer, m.objs, x, m.θ, obj_weight)
+
+    kerspmv(m.ext.backend)(Hmv, v, m.ext.prodhelper.mhesssparsityi, m.ext.prodhelper.mhessbuffer, m.ext.prodhelper.mhessptri, ndrange = length(m.ext.prodhelper.mhessptri) - 1)
+
+    return Hmv
+end
+
+function ExaModels.hpprod!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmv::AbstractVector; obj_weight = one(eltype(x))) where {T,VT,N<:NamedTuple,E<:KAExtension{T,VT,N}}
+    fill!(Hmv, zero(eltype(Hmv)))
+    isempty(m.ext.prodhelper.mhessbuffer) && return Hmv
+    fill!(m.ext.prodhelper.mhessbuffer, zero(eltype(Hmv)))
+
+    _obj_hess_param_coord!(m.ext.backend, m.ext.prodhelper.mhessbuffer, m.objs, x, m.θ, obj_weight)
+    _con_hess_param_coord!(m.ext.backend, m.ext.prodhelper.mhessbuffer, m.cons, x, m.θ, y)
+
+    kerspmv(m.ext.backend)(Hmv, v, m.ext.prodhelper.mhesssparsityi, m.ext.prodhelper.mhessbuffer, m.ext.prodhelper.mhessptri, ndrange = length(m.ext.prodhelper.mhessptri) - 1)
+
+    return Hmv
+end
+
+function ExaModels.hptprod!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x))) where {T,VT,N<:NamedTuple,E<:KAExtension{T,VT,N}}
+    fill!(Hmtv, zero(eltype(Hmtv)))
+    isempty(m.ext.prodhelper.mhessbuffer) && return Hmtv
+    fill!(m.ext.prodhelper.mhessbuffer, zero(eltype(Hmtv)))
+
+    _obj_hess_param_coord!(m.ext.backend, m.ext.prodhelper.mhessbuffer, m.objs, x, m.θ, obj_weight)
+
+    kerspmv2(m.ext.backend)(Hmtv, v, m.ext.prodhelper.mhesssparsityj, m.ext.prodhelper.mhessbuffer, m.ext.prodhelper.mhessptrj, ndrange = length(m.ext.prodhelper.mhessptrj) - 1)
+
+    return Hmtv
+end
+
+function ExaModels.hptprod!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, y::AbstractVector, v::AbstractVector, Hmtv::AbstractVector; obj_weight = one(eltype(x))) where {T,VT,N<:NamedTuple,E<:KAExtension{T,VT,N}}
+    fill!(Hmtv, zero(eltype(Hmtv)))
+    isempty(m.ext.prodhelper.mhessbuffer) && return Hmtv
+    fill!(m.ext.prodhelper.mhessbuffer, zero(eltype(Hmtv)))
+
+    _obj_hess_param_coord!(m.ext.backend, m.ext.prodhelper.mhessbuffer, m.objs, x, m.θ, obj_weight)
+    _con_hess_param_coord!(m.ext.backend, m.ext.prodhelper.mhessbuffer, m.cons, x, m.θ, y)
+
+    kerspmv2(m.ext.backend)(Hmtv, v, m.ext.prodhelper.mhesssparsityj, m.ext.prodhelper.mhessbuffer, m.ext.prodhelper.mhessptrj, ndrange = length(m.ext.prodhelper.mhessptrj) - 1)
+
+    return Hmtv
+end
+
+function ExaModels.hess_param_coord!(m::ExaModels.ExaModel{T,VT,E}, x::V, hess::V; obj_weight = one(eltype(x))) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    fill!(hess, zero(eltype(hess)))
+    _obj_hess_param_coord!(m.ext.backend, hess, m.objs, x, m.θ, obj_weight)
+    return hess
+end
+
+function ExaModels.hess_param_coord!(m::ExaModels.ExaModel{T,VT,E}, x::V, y::V, hess::V; obj_weight = one(eltype(x))) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    fill!(hess, zero(eltype(hess)))
+    _obj_hess_param_coord!(m.ext.backend, hess, m.objs, x, m.θ, obj_weight)
+    _con_hess_param_coord!(m.ext.backend, hess, m.cons, x, m.θ, y)
+    return hess
+end
+
+function _obj_hess_param_coord!(backend, buffer, objs, x, θ, obj_weight)
+    _obj_hess_param_coord!(backend, buffer, objs.inner, x, θ, obj_weight)
+    if objs.f.mo2step > 0
+        ExaModels.shessian_param!(backend, buffer, nothing, objs, x, θ, obj_weight)
+    end
+end
+function _obj_hess_param_coord!(backend, buffer, objs::ExaModels.ObjectiveNull, x, θ, obj_weight) end
+
+function _con_hess_param_coord!(backend, buffer, cons, x, θ, y)
+    _con_hess_param_coord!(backend, buffer, cons.inner, x, θ, y)
+    if cons.f.mo2step > 0
+        ExaModels.shessian_param!(backend, buffer, nothing, cons, x, θ, y)
+    end
+end
+function _con_hess_param_coord!(backend, buffer, cons::ExaModels.ConstraintNull, x, θ, y) end
+
+function ExaModels.shessian_param!(backend::B, y1, y2, f, x, θ, adj) where {B<:KernelAbstractions.Backend}
+    if !isempty(f.itr)
+        kermh(backend)(y1, y2, f.f, f.itr, x, θ, adj; ndrange = length(f.itr))
+    end
+end
+function ExaModels.shessian_param!(backend::B, y1, y2, f, x, θ, adj::V) where {B<:KernelAbstractions.Backend,V<:AbstractVector}
+    if !isempty(f.itr)
+        kermh2(backend)(y1, y2, f.f, f.itr, x, θ, adj; ndrange = length(f.itr))
+    end
+end
+
+function ExaModels.jac_param_coord!(m::ExaModels.ExaModel{T,VT,E}, x::V, jac::V) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    fill!(jac, zero(eltype(jac)))
+    _jac_param_coord!(m.ext.backend, jac, m.cons, x, m.θ)
+    return jac
+end
+function _jac_param_coord!(backend, y, cons, x, θ)
+    _jac_param_coord!(backend, y, cons.inner, x, θ)
+    if cons.f.po1step > 0
+        ExaModels.sjacobian_param!(backend, y, nothing, cons, x, θ, one(eltype(y)))
+    end
+end
+function _jac_param_coord!(backend, y, cons::ExaModels.ConstraintNull, x, θ) end
+
+function ExaModels.jac_param_structure!(m::ExaModels.ExaModel{T,VT,E}, rows::V, cols::V) where {T,VT,E<:KAExtension,V<:AbstractVector}
+    if !isempty(rows)
+        _jac_param_structure!(m.ext.backend, m.cons, rows, cols)
+    end
+    return rows, cols
+end
+function _jac_param_structure!(backend, cons, rows, cols)
+    _jac_param_structure!(backend, cons.inner, rows, cols)
+    if cons.f.po1step > 0
+        ExaModels.sjacobian_param!(backend, rows, cols, cons, nothing, nothing, NaN)
+    end
+end
+function _jac_param_structure!(backend, cons::ExaModels.ConstraintNull, rows, cols) end
+
+function ExaModels.sjacobian_param!(backend::B, y1, y2, f, x, θ, adj) where {B<:KernelAbstractions.Backend}
+    if !isempty(f.itr)
+        kerjp(backend)(y1, y2, f.f, f.itr, x, θ, adj; ndrange = length(f.itr))
+    end
+end
+
+function ExaModels.jpprod!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, v::AbstractVector, Jpv::AbstractVector) where {T,VT,N<:NamedTuple,E<:KAExtension{T,VT,N}}
+    fill!(Jpv, zero(eltype(Jpv)))
+    isempty(m.ext.prodhelper.jacpbuffer) && return Jpv
+    fill!(m.ext.prodhelper.jacpbuffer, zero(eltype(Jpv)))
+
+    _jac_param_coord!(m.ext.backend, m.ext.prodhelper.jacpbuffer, m.cons, x, m.θ)
+
+    kerspmv(m.ext.backend)(Jpv, v, m.ext.prodhelper.jacpsparsityi, m.ext.prodhelper.jacpbuffer, m.ext.prodhelper.jacpptri, ndrange = length(m.ext.prodhelper.jacpptri) - 1)
+
+    return Jpv
+end
+
+function ExaModels.jptprod!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, v::AbstractVector, Jptv::AbstractVector) where {T,VT,N<:NamedTuple,E<:KAExtension{T,VT,N}}
+    fill!(Jptv, zero(eltype(Jptv)))
+    isempty(m.ext.prodhelper.jacpbuffer) && return Jptv
+    fill!(m.ext.prodhelper.jacpbuffer, zero(eltype(Jptv)))
+
+    _jac_param_coord!(m.ext.backend, m.ext.prodhelper.jacpbuffer, m.cons, x, m.θ)
+
+    kerspmv2(m.ext.backend)(Jptv, v, m.ext.prodhelper.jacpsparsityj, m.ext.prodhelper.jacpbuffer, m.ext.prodhelper.jacpptrj, ndrange = length(m.ext.prodhelper.jacpptrj) - 1)
+
+    return Jptv
+end
+
+function ExaModels.grad_param!(m::ExaModels.ExaModel{T,VT,E}, x::AbstractVector, g::AbstractVector) where {T,VT,E<:KAExtension}
+    pgradbuffer = m.ext.pgradbuffer
+    fill!(g, zero(eltype(g)))
+    if !isempty(pgradbuffer)
+        fill!(pgradbuffer, zero(eltype(pgradbuffer)))
+        _grad_param_ka!(m.ext.backend, pgradbuffer, m.objs, x, m.θ)
+        compress_to_dense(m.ext.backend)(g, pgradbuffer, m.ext.pgptr, m.ext.pgsparsity; ndrange = length(m.ext.pgptr) - 1)
+    end
+    return g
+end
+
+function _grad_param_ka!(backend, g, objs, x, θ)
+    _grad_param_ka!(backend, g, objs.inner, x, θ)
+    ExaModels.sgradient_param!(backend, g, objs, x, θ, one(eltype(g)))
+end
+function _grad_param_ka!(backend, g, objs::ExaModels.ObjectiveNull, x, θ) end
+
+function ExaModels.sgradient_param!(backend::B, y, f, x, θ, adj) where {B<:KernelAbstractions.Backend}
+    if !isempty(f.itr)
+        kergp(backend)(y, f.f, f.itr, x, θ, f.f.pcomp1, f.f.po1, f.f.po1step, adj; ndrange = length(f.itr))
+    end
+end
+
+function _grad_param_structure!(backend, objs, pgsparsity)
+    ExaModels.sgradient_param!(backend, pgsparsity, objs, nothing, nothing, NaN)
+    _grad_param_structure!(backend, objs.inner, pgsparsity)
+end
+function _grad_param_structure!(backend, objs::ExaModels.ObjectiveNull, pgsparsity) end
+
 @kernel function kerspmv(y, @Const(x), @Const(coord), @Const(V), @Const(ptr))
     idx = @index(Global)
     @inbounds for l = ptr[idx]:(ptr[idx+1]-1)
@@ -674,6 +929,30 @@ end
     @inbounds sparsity[i] = ((J[i], I[i]), i)
 end
 
+@kernel function kergp(y, @Const(f), @Const(itr), @Const(x), @Const(θ), @Const(comp), @Const(po1), @Const(po1step), @Const(adj))
+    I = @index(Global)
+    @inbounds ExaModels.grpass(f(itr[I], x, ExaModels.AdjointParameterSource(θ)), comp, y, po1 + po1step * (I - 1), 0, adj)
+end
+
+@kernel function kerjp(y1, y2, @Const(f), @Const(itr), @Const(x), @Const(θ), @Const(adj))
+    I = @index(Global)
+    @inbounds ExaModels.jrpass(f(itr[I], x, ExaModels.AdjointParameterSource(θ)), f.pcomp1, ExaModels.offset0(f, itr, I), y1, y2, ExaModels.offset1_param(f, I), 0, adj)
+end
+
+@kernel function kermh(y1, y2, @Const(f), @Const(itr), @Const(x), @Const(θ), @Const(adj))
+    I = @index(Global)
+    @inbounds ExaModels.mhrpass0(
+        f(itr[I], ExaModels.SecondAdjointNodeSource(x), ExaModels.SecondAdjointParameterSource(θ)),
+        f.mcomp2, y1, y2, ExaModels.offset2_param(f, I), 0, adj, zero(adj),
+    )
+end
+@kernel function kermh2(y1, y2, @Const(f), @Const(itr), @Const(x), @Const(θ), @Const(adjs))
+    I = @index(Global)
+    adj = @inbounds adjs[ExaModels.offset0(f, itr, I)]
+    @inbounds ExaModels.mhrpass0(
+        f(itr[I], ExaModels.SecondAdjointNodeSource(x), ExaModels.SecondAdjointParameterSource(θ)),
+        f.mcomp2, y1, y2, ExaModels.offset2_param(f, I), 0, adj, zero(adj),
+    )
+end
+
 end # module ExaModelsKernelAbstractions
-
-
